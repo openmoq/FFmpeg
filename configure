@@ -249,6 +249,7 @@ External library support:
   --enable-liblcevc-dec    enable LCEVC decoding via liblcevc-dec [no]
   --enable-liblensfun      enable lensfun lens correction [no]
   --enable-libmodplug      enable ModPlug via libmodplug [no]
+  --enable-libmoq          enable MOQ output via libmoq [no]
   --enable-libmp3lame      enable MP3 encoding via libmp3lame [no]
   --enable-libmpeghdec     enable MPEG-H 3DA decoding via libmpeghdec [no]
   --enable-liboapv         enable APV encoding via liboapv [no]
@@ -2071,6 +2072,7 @@ EXTERNAL_LIBRARY_LIST="
     liblc3
     liblcevc_dec
     libmodplug
+    libmoq
     libmp3lame
     libmysofa
     liboapv
@@ -3799,6 +3801,8 @@ pcm_alaw_at_encoder_select="audio_frame_queue"
 pcm_mulaw_at_encoder_deps="audiotoolbox"
 pcm_mulaw_at_encoder_select="audio_frame_queue"
 chromaprint_muxer_deps="chromaprint"
+moq_muxer_deps="libmoq"
+moq_muxer_select="aac_adtstoasc_bsf extract_extradata_bsf"
 h264_videotoolbox_encoder_deps="pthreads"
 h264_videotoolbox_encoder_select="atsc_a53 videotoolbox_encoder"
 hevc_videotoolbox_encoder_deps="pthreads"
@@ -7381,6 +7385,7 @@ if enabled libmfx; then
 fi
 
 enabled libmodplug        && require_pkg_config libmodplug libmodplug libmodplug/modplug.h ModPlug_Load
+enabled libmoq            && require_pkg_config libmoq "libmoq-service >= 0.1.0" moq/media_sender.h moq_media_sender_write
 enabled libmp3lame        && require "libmp3lame >= 3.98.3" lame/lame.h lame_set_VBR_quality -lmp3lame $libm_extralibs
 enabled libmpeghdec       && require_pkg_config libmpeghdec "mpeghdec >= 3.0.0" mpeghdec/mpeghdecoder.h mpeghdecoder_init
 enabled libmysofa         && { check_pkg_config libmysofa libmysofa mysofa.h mysofa_neighborhood_init_withstepdefine ||
