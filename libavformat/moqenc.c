@@ -320,14 +320,18 @@ static int moq_init(AVFormatContext *s)
     if (ret < 0)
         return ret;
 
-    static const moq_version_t versions[] = { MOQ_VERSION_DRAFT_16 };
+    static const moq_version_t versions[] = {
+        MOQ_VERSION_DRAFT_18,
+        MOQ_VERSION_DRAFT_16,
+    };
     moq_endpoint_cfg_t ecfg;
     moq_endpoint_cfg_init(&ecfg);
     ecfg.url                  = moq_bytes_cstr(s->url);
     ecfg.insecure_skip_verify = ctx->insecure;
     if (ctx->ca_file)
         ecfg.ca_file = moq_bytes_cstr(ctx->ca_file);
-    ecfg.versions.policy        = MOQ_VERSION_POLICY_EXACT;
+    /* EXACT is one version and fatal on mismatch. */
+    ecfg.versions.policy        = MOQ_VERSION_POLICY_LIST;
     ecfg.versions.versions      = versions;
     ecfg.versions.version_count = FF_ARRAY_ELEMS(versions);
 
@@ -336,7 +340,9 @@ static int moq_init(AVFormatContext *s)
         return moq_err(s, res, "Could not connect to the relay");
 
     moq_media_sender_cfg_t scfg;
-    moq_media_sender_cfg_init_live(&scfg);
+    /* Pointer-only init_live() stamps the v0 prefix only, so publish_tracks
+     * would be ignored. */
+    moq_media_sender_cfg_init_live_sized(&scfg, sizeof(scfg));
     scfg.endpoint            = NULL;   /* use our endpoint to allow  */
     scfg.namespace_.parts    = ctx->ns_parts;
     scfg.namespace_.count    = ctx->ns_count;
