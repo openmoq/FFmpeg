@@ -88,6 +88,9 @@ typedef struct MOQContext {
     char *video_track_name;
     char *ca_file;
     int insecure;
+    int draft;
+
+    moq_version_t version_buf[2];
 
     /* namespace storage; ns_parts point into ns_buf */
     char *ns_buf;
@@ -320,24 +323,33 @@ static int moq_init(AVFormatContext *s)
     if (ret < 0)
         return ret;
 
-    static const moq_version_t versions[] = { MOQ_VERSION_DRAFT_16 };
     moq_endpoint_cfg_t ecfg;
     moq_endpoint_cfg_init(&ecfg);
     ecfg.url                  = moq_bytes_cstr(s->url);
     ecfg.insecure_skip_verify = ctx->insecure;
     if (ctx->ca_file)
         ecfg.ca_file = moq_bytes_cstr(ctx->ca_file);
+
+    if (ctx->draft) {
+        ctx->version_buf[0]         = (moq_version_t)ctx->draft;
     ecfg.versions.policy        = MOQ_VERSION_POLICY_EXACT;
-    ecfg.versions.versions      = versions;
-    ecfg.versions.version_count = FF_ARRAY_ELEMS(versions);
+        ecfg.versions.version_count = 1;
+    } else {
+        ctx->version_buf[0]         = MOQ_VERSION_DRAFT_18;
+        ctx->version_buf[1]         = MOQ_VERSION_DRAFT_16;
+        ecfg.versions.policy        = MOQ_VERSION_POLICY_LIST;
+        ecfg.versions.version_count = 2;
+    }
+    ecfg.versions.versions = ctx->version_buf;
+    ecfg.versions.struct_size = sizeof(ecfg.versions);
 
     moq_result_t res = moq_endpoint_connect(&ecfg, &ctx->ep);
     if (res != MOQ_OK)
         return moq_err(s, res, "Could not connect to the relay");
 
     moq_media_sender_cfg_t scfg;
-    moq_media_sender_cfg_init_live(&scfg);
-    scfg.endpoint            = NULL;   /* use our endpoint to allow  */
+    moq_media_sender_cfg_init_live_sized(&scfg, sizeof(scfg));
+    scfg.endpoint = NULL;
     scfg.namespace_.parts    = ctx->ns_parts;
     scfg.namespace_.count    = ctx->ns_count;
     scfg.publish_tracks      = 1;
@@ -488,6 +500,10 @@ static const AVOption options[] = {
     { "moq_video_track", "Catalog name of the published video track", OFFSET(video_track_name), AV_OPT_TYPE_STRING, { .str = "video" }, 0, 0, ENC },
     { "moq_ca_file", "CA bundle used to verify the relay certificate", OFFSET(ca_file), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
     { "moq_insecure", "Skip relay certificate verification (testing only)", OFFSET(insecure), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, ENC },
+    { "moq_draft", "MoQT draft to negotiate", OFFSET(draft), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 18, ENC, .unit = "draft" },
+        { "auto", "offer every supported draft, newest first, and let the relay choose", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, ENC, .unit = "draft" },
+        { "16", "draft-16 only; a relay without it fails to connect", 0, AV_OPT_TYPE_CONST, { .i64 = 16 }, 0, 0, ENC, .unit = "draft" },
+        { "18", "draft-18 only; a relay without it fails to connect", 0, AV_OPT_TYPE_CONST, { .i64 = 18 }, 0, 0, ENC, .unit = "draft" },
     { NULL },
 };
 
