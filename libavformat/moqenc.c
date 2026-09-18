@@ -65,7 +65,7 @@
 /* flags to control that one cmaf chunk becomes one MoQ Object and that the
  * init segment is emitted by itself */
 #define MOQ_CMAF_MOVFLAGS                                                      \
-  "+cmaf+frag_custom+empty_moov+default_base_moof+skip_trailer"
+    "+cmaf+frag_custom+empty_moov+default_base_moof+skip_trailer"
 
 #define MOQ_CONNECT_TIMEOUT_US 5000000
 
@@ -77,8 +77,8 @@
 #define MOQ_DRAIN_TIMEOUT_US 5000000
 
 enum {
-  MOQ_PKG_LOC,
-  MOQ_PKG_CMAF,
+    MOQ_PKG_LOC,
+    MOQ_PKG_CMAF,
 };
 
 typedef struct MOQContext {
@@ -120,16 +120,16 @@ typedef struct MOQContext {
 } MOQContext;
 
 typedef struct MOQObject {
-  const uint8_t *data;
-  int size;
-  int64_t pts, dts;
-  int is_sync;
-  int starts_group, ends_group;
-  int64_t capture_time_us;
+	const uint8_t *data;
+    int size;
+    int64_t pts, dts;
+    int is_sync;
+    int starts_group, ends_group;
+    int64_t capture_time_us;
 } MOQObject;
 
 static av_always_inline int moq_is_cmaf(const MOQContext *ctx) {
-  return ctx->packaging == MOQ_PKG_CMAF;
+    return ctx->packaging == MOQ_PKG_CMAF;
 }
 
 static int moq_err(AVFormatContext *s, moq_result_t res, const char *what)
@@ -204,57 +204,57 @@ static int moq_split_namespace(AVFormatContext *s)
  */
 static int moq_open_fragmenter(AVFormatContext *s, uint8_t **init,
                                size_t *init_len) {
-  MOQContext *ctx = s->priv_data;
-  AVStream *st = s->streams[0];
-  AVDictionary *opts = NULL;
-  AVFormatContext *c;
-  AVStream *cst;
-  uint8_t *buf;
-  int len, ret;
+    MOQContext *ctx = s->priv_data;
+    AVStream *st = s->streams[0];
+    AVDictionary *opts = NULL;
+    AVFormatContext *c;
+    AVStream *cst;
+    uint8_t *buf;
+    int len, ret;
 
-  ret = avformat_alloc_output_context2(&ctx->mp4, NULL, "mp4", NULL);
-  if (ret < 0)
-    return ret;
-  c = ctx->mp4;
-  c->flags |= s->flags & AVFMT_FLAG_BITEXACT;
+    ret = avformat_alloc_output_context2(&ctx->mp4, NULL, "mp4", NULL);
+    if (ret < 0)
+        return ret;
+    c = ctx->mp4;
+    c->flags |= s->flags & AVFMT_FLAG_BITEXACT;
 
-  cst = avformat_new_stream(c, NULL);
-  if (!cst)
-    return AVERROR(ENOMEM);
-  if ((ret = avcodec_parameters_copy(cst->codecpar, st->codecpar)) < 0)
-    return ret;
-  cst->time_base = ctx->src_tb;
+    cst = avformat_new_stream(c, NULL);
+    if (!cst)
+        return AVERROR(ENOMEM);
+    if ((ret = avcodec_parameters_copy(cst->codecpar, st->codecpar)) < 0)
+        return ret;
+    cst->time_base = ctx->src_tb;
 
-  if ((ret = avio_open_dyn_buf(&c->pb)) < 0)
-    return ret;
+    if ((ret = avio_open_dyn_buf(&c->pb)) < 0)
+        return ret;
 
-  av_dict_set(&opts, "movflags", MOQ_CMAF_MOVFLAGS, 0);
- 
-  if (ctx->frame_rate.num > 0)
-    av_dict_set_int(&opts, "video_track_timescale", ctx->frame_rate.num, 0);
-  
-  ret = avformat_write_header(c, &opts);
-  av_dict_free(&opts);
-  if (ret < 0) {
-    av_log(s, AV_LOG_ERROR, "Could not start the CMAF fragmenter\n");
-    return ret;
-  }
+    av_dict_set(&opts, "movflags", MOQ_CMAF_MOVFLAGS, 0);
 
-  ctx->cmaf_timescale = cst->time_base.den;
+    if (ctx->frame_rate.num > 0)
+        av_dict_set_int(&opts, "video_track_timescale", ctx->frame_rate.num, 0);
 
-  avio_flush(c->pb);
-  len = avio_get_dyn_buf(c->pb, &buf);
-  if (len <= 0) {
-    av_log(s, AV_LOG_ERROR, "CMAF fragmenter produced no init segment\n");
-    return AVERROR_EXTERNAL;
-  }
-  *init = av_memdup(buf, len);
-  if (!*init)
-    return AVERROR(ENOMEM);
-  *init_len = len;
-  ffio_reset_dyn_buf(c->pb);
+    ret = avformat_write_header(c, &opts);
+    av_dict_free(&opts);
+    if (ret < 0) {
+        av_log(s, AV_LOG_ERROR, "Could not start the CMAF fragmenter\n");
+        return ret;
+    }
 
-  return 0;
+    ctx->cmaf_timescale = cst->time_base.den;
+
+    avio_flush(c->pb);
+    len = avio_get_dyn_buf(c->pb, &buf);
+    if (len <= 0) {
+        av_log(s, AV_LOG_ERROR, "CMAF fragmenter produced no init segment\n");
+        return AVERROR_EXTERNAL;
+    }
+    *init = av_memdup(buf, len);
+    if (!*init)
+        return AVERROR(ENOMEM);
+    *init_len = len;
+    ffio_reset_dyn_buf(c->pb);
+
+    return 0;
 }
 
 /**
@@ -262,176 +262,176 @@ static int moq_open_fragmenter(AVFormatContext *s, uint8_t **init,
  */
 static int moq_fragment(AVFormatContext *s, AVPacket *pkt, uint8_t **out,
                         int *out_len) {
-  MOQContext *ctx = s->priv_data;
-  int64_t pts = pkt->pts;
-  int64_t dts = pkt->dts;
-  int64_t duration = pkt->duration;
-  int ret;
+    MOQContext *ctx = s->priv_data;
+    int64_t pts = pkt->pts;
+    int64_t dts = pkt->dts;
+    int64_t duration = pkt->duration;
+    int ret;
 
-  /* One sample per fragment leaves movenc no next dts to diff agains */
-  if (!pkt->duration) {
-    if (ctx->frame_rate.num > 0)
-      pkt->duration = av_rescale_q(1, av_inv_q(ctx->frame_rate),
-                                   s->streams[0]->time_base);
-    else if (!ctx->no_duration_warned) {
-      av_log(s, AV_LOG_WARNING, "Packets carry no duration and the stream "
-                                "declares no frame rate; CMAF chunks will "
-                                "have zero sample durations\n");
-      ctx->no_duration_warned = 1;
+    /* One sample per fragment leaves movenc no next dts to diff agains */
+    if (!pkt->duration) {
+        if (ctx->frame_rate.num > 0)
+            pkt->duration = av_rescale_q(1, av_inv_q(ctx->frame_rate),
+                                         s->streams[0]->time_base);
+        else if (!ctx->no_duration_warned) {
+            av_log(s, AV_LOG_WARNING, "Packets carry no duration and the stream "
+                                      "declares no frame rate; CMAF chunks will "
+                                      "have zero sample durations\n");
+            ctx->no_duration_warned = 1;
+        }
     }
-  }
 
-  if (ctx->ts_offset == AV_NOPTS_VALUE) {
-    ctx->ts_offset = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
-    if (ctx->ts_offset == AV_NOPTS_VALUE)
-      ctx->ts_offset = 0;
-  }
-  if (pkt->pts != AV_NOPTS_VALUE)
-    pkt->pts -= ctx->ts_offset;
-  if (pkt->dts != AV_NOPTS_VALUE)
-    pkt->dts -= ctx->ts_offset;
+    if (ctx->ts_offset == AV_NOPTS_VALUE) {
+        ctx->ts_offset = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
+        if (ctx->ts_offset == AV_NOPTS_VALUE)
+            ctx->ts_offset = 0;
+    }
+    if (pkt->pts != AV_NOPTS_VALUE)
+        pkt->pts -= ctx->ts_offset;
+    if (pkt->dts != AV_NOPTS_VALUE)
+        pkt->dts -= ctx->ts_offset;
 
-  /* ff_write_chained() restores pkt's stream_index afterwards; it does not
-   * copy the packet, so the rebase above and the restore below bracket it. */
-  ret = ff_write_chained(ctx->mp4, 0, pkt, s, 0);
-  pkt->pts = pts;
-  pkt->dts = dts;
-  pkt->duration = duration;
-  if (ret < 0) {
-    av_log(s, AV_LOG_ERROR, "CMAF fragmenter rejected a packet: %s\n",
-           av_err2str(ret));
-    return ret;
-  }
+    /* ff_write_chained() restores pkt's stream_index afterwards; it does not
+     * copy the packet, so the rebase above and the restore below bracket it. */
+    ret = ff_write_chained(ctx->mp4, 0, pkt, s, 0);
+    pkt->pts = pts;
+    pkt->dts = dts;
+    pkt->duration = duration;
+    if (ret < 0) {
+        av_log(s, AV_LOG_ERROR, "CMAF fragmenter rejected a packet: %s\n",
+               av_err2str(ret));
+        return ret;
+    }
 
-  if ((ret = av_write_frame(ctx->mp4, NULL)) < 0)
-    return ret;
+    if ((ret = av_write_frame(ctx->mp4, NULL)) < 0)
+        return ret;
 
-  avio_flush(ctx->mp4->pb);
-  *out_len = avio_get_dyn_buf(ctx->mp4->pb, out);
+    avio_flush(ctx->mp4->pb);
+    *out_len = avio_get_dyn_buf(ctx->mp4->pb, out);
 
-  return 0;
+    return 0;
 }
 
 static int moq_build_codec_config(AVFormatContext *s, uint8_t **init_data,
                                   size_t *init_data_len) {
-  MOQContext *ctx = s->priv_data;
-  const AVCodecParameters *par = s->streams[0]->codecpar;
-  const uint8_t *src = par->extradata;
-  uint8_t *buf = NULL;
-  size_t len = 0;
+    MOQContext *ctx = s->priv_data;
+    const AVCodecParameters *par = s->streams[0]->codecpar;
+    const uint8_t *src = par->extradata;
+    uint8_t *buf = NULL;
+    size_t len = 0;
 
-  if (!src || par->extradata_size <= 0) {
-    av_log(s, AV_LOG_ERROR, "The stream carries no decoder configuration\n");
-    return AVERROR(EINVAL);
-  }
+    if (!src || par->extradata_size <= 0) {
+        av_log(s, AV_LOG_ERROR, "The stream carries no decoder configuration\n");
+        return AVERROR(EINVAL);
+    }
 
-  moq_codec_init_data_cfg_t icfg;
-  moq_codec_init_data_cfg_init(&icfg);
-  icfg.source_format = src[0] == MOQ_AVCC_FIRST_BYTE
-                           ? MOQ_CODEC_SOURCE_AVC_AVCC
-                           : MOQ_CODEC_SOURCE_AVC_ANNEXB;
-  icfg.source.data = src;
-  icfg.source.len = par->extradata_size;
+    moq_codec_init_data_cfg_t icfg;
+    moq_codec_init_data_cfg_init(&icfg);
+    icfg.source_format = src[0] == MOQ_AVCC_FIRST_BYTE
+                             ? MOQ_CODEC_SOURCE_AVC_AVCC
+                             : MOQ_CODEC_SOURCE_AVC_ANNEXB;
+    icfg.source.data = src;
+    icfg.source.len = par->extradata_size;
 
-  ctx->annexb = icfg.source_format == MOQ_CODEC_SOURCE_AVC_ANNEXB;
+    ctx->annexb = icfg.source_format == MOQ_CODEC_SOURCE_AVC_ANNEXB;
 
-  moq_result_t res = moq_codec_init_data_build(&icfg, NULL, 0, &len);
-  if (res != MOQ_ERR_BUFFER)
-    return moq_err(s, res, "Could not size the decoder configuration");
+    moq_result_t res = moq_codec_init_data_build(&icfg, NULL, 0, &len);
+    if (res != MOQ_ERR_BUFFER)
+        return moq_err(s, res, "Could not size the decoder configuration");
 
-  buf = av_malloc(len);
-  if (!buf)
-    return AVERROR(ENOMEM);
+    buf = av_malloc(len);
+    if (!buf)
+        return AVERROR(ENOMEM);
 
-  res = moq_codec_init_data_build(&icfg, buf, len, &len);
-  if (res != MOQ_OK) {
-    av_free(buf);
-    return moq_err(s, res, "Could not build the decoder configuration");
-  }
+    res = moq_codec_init_data_build(&icfg, buf, len, &len);
+    if (res != MOQ_OK) {
+        av_free(buf);
+        return moq_err(s, res, "Could not build the decoder configuration");
+    }
 
-  moq_codec_string_cfg_t scfg;
-  moq_codec_string_cfg_init(&scfg);
-  scfg.config_format = MOQ_CODEC_CONFIG_AVCC;
-  scfg.sample_entry = moq_bytes_cstr("avc1");
-  scfg.decoder_config.data = buf;
-  scfg.decoder_config.len = len;
+    moq_codec_string_cfg_t scfg;
+    moq_codec_string_cfg_init(&scfg);
+    scfg.config_format = MOQ_CODEC_CONFIG_AVCC;
+    scfg.sample_entry = moq_bytes_cstr("avc1");
+    scfg.decoder_config.data = buf;
+    scfg.decoder_config.len = len;
 
-  res = moq_codec_string_format(&scfg, (uint8_t *)ctx->codec_str,
-                                sizeof(ctx->codec_str), &ctx->codec_str_len);
-  if (res != MOQ_OK) {
-    av_free(buf);
-    return moq_err(s, res, "Could not format the codec string");
-  }
+    res = moq_codec_string_format(&scfg, (uint8_t *)ctx->codec_str,
+                                  sizeof(ctx->codec_str), &ctx->codec_str_len);
+    if (res != MOQ_OK) {
+        av_free(buf);
+        return moq_err(s, res, "Could not format the codec string");
+    }
 
-  *init_data = buf;
-  *init_data_len = len;
+    *init_data = buf;
+    *init_data_len = len;
 
-  return 0;
+    return 0;
 }
 
 static int moq_add_video_track(AVFormatContext *s, const uint8_t *init_data,
                                size_t init_data_len) {
-  MOQContext *ctx = s->priv_data;
-  const AVCodecParameters *par = s->streams[0]->codecpar;
-  int cmaf = moq_is_cmaf(ctx);
+    MOQContext *ctx = s->priv_data;
+    const AVCodecParameters *par = s->streams[0]->codecpar;
+    int cmaf = moq_is_cmaf(ctx);
 
-  moq_media_track_cfg_t tcfg;
-  memset(&tcfg, 0, sizeof(tcfg));
-  moq_media_track_cfg_init(&tcfg);
-  tcfg.name = moq_bytes_cstr(ctx->video_track_name);
-  tcfg.media_type = MOQ_MEDIA_TYPE_VIDEO;
-  tcfg.codec.data = (const uint8_t *)ctx->codec_str;
-  tcfg.codec.len = ctx->codec_str_len;
-  tcfg.timescale = cmaf ? ctx->cmaf_timescale : MOQ_TIMESCALE;
-  tcfg.is_live = 1;
-  tcfg.width = par->width;
-  tcfg.height = par->height;
-  tcfg.packaging = cmaf ? MOQ_MEDIA_PACKAGING_CMAF : MOQ_MEDIA_PACKAGING_RAW;
-  tcfg.init_data.data = init_data;
-  tcfg.init_data.len = init_data_len;
+    moq_media_track_cfg_t tcfg;
+    memset(&tcfg, 0, sizeof(tcfg));
+    moq_media_track_cfg_init(&tcfg);
+    tcfg.name = moq_bytes_cstr(ctx->video_track_name);
+    tcfg.media_type = MOQ_MEDIA_TYPE_VIDEO;
+    tcfg.codec.data = (const uint8_t *)ctx->codec_str;
+    tcfg.codec.len = ctx->codec_str_len;
+    tcfg.timescale = cmaf ? ctx->cmaf_timescale : MOQ_TIMESCALE;
+    tcfg.is_live = 1;
+    tcfg.width = par->width;
+    tcfg.height = par->height;
+    tcfg.packaging = cmaf ? MOQ_MEDIA_PACKAGING_CMAF : MOQ_MEDIA_PACKAGING_RAW;
+    tcfg.init_data.data = init_data;
+    tcfg.init_data.len = init_data_len;
 
-  if (ctx->frame_rate.num > 0)
-    tcfg.framerate_millis =
-        av_rescale(1000, ctx->frame_rate.num, ctx->frame_rate.den);
+    if (ctx->frame_rate.num > 0)
+        tcfg.framerate_millis =
+            av_rescale(1000, ctx->frame_rate.num, ctx->frame_rate.den);
 
-  if (par->bit_rate > 0) {
-    tcfg.bitrate = par->bit_rate;
-  } else {
-    tcfg.bitrate = MOQ_DEFAULT_VIDEO_BITRATE;
-  }
+    if (par->bit_rate > 0) {
+        tcfg.bitrate = par->bit_rate;
+    } else {
+        tcfg.bitrate = MOQ_DEFAULT_VIDEO_BITRATE;
+    }
 
-  moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &ctx->track);
-  if (res != MOQ_OK)
-    return moq_err(s, res, "Could not add the track");
+    moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &ctx->track);
+    if (res != MOQ_OK)
+        return moq_err(s, res, "Could not add the track");
 
-  av_log(s, AV_LOG_VERBOSE,
-         "Published %s track '%s' as %.*s (%d bytes of init data)\n",
-         cmaf ? "CMAF" : "LOC", ctx->video_track_name, (int)ctx->codec_str_len,
-         ctx->codec_str, (int)tcfg.init_data.len);
+    av_log(s, AV_LOG_VERBOSE,
+           "Published %s track '%s' as %.*s (%d bytes of init data)\n",
+           cmaf ? "CMAF" : "LOC", ctx->video_track_name, (int)ctx->codec_str_len,
+           ctx->codec_str, (int)tcfg.init_data.len);
 
-  return 0;
+    return 0;
 }
 
 static int moq_create_track(AVFormatContext *s) {
-  uint8_t *init_data = NULL;
-  size_t init_data_len = 0;
-  int ret;
+    uint8_t *init_data = NULL;
+    size_t init_data_len = 0;
+    int ret;
 
-  ret = moq_build_codec_config(s, &init_data, &init_data_len);
-  if (ret < 0)
+    ret = moq_build_codec_config(s, &init_data, &init_data_len);
+    if (ret < 0)
+        return ret;
+
+    if (moq_is_cmaf(s->priv_data)) {
+        av_freep(&init_data);
+        init_data_len = 0;
+        ret = moq_open_fragmenter(s, &init_data, &init_data_len);
+    }
+
+    if (ret >= 0)
+        ret = moq_add_video_track(s, init_data, init_data_len);
+
+    av_free(init_data);
     return ret;
-
-  if (moq_is_cmaf(s->priv_data)) {
-    av_freep(&init_data);
-    init_data_len = 0;
-    ret = moq_open_fragmenter(s, &init_data, &init_data_len);
-  }
-  
-  if (ret >= 0)
-    ret = moq_add_video_track(s, init_data, init_data_len);
-
-  av_free(init_data);
-  return ret;
 }
 
 static int moq_wait_ready(AVFormatContext *s)
@@ -511,7 +511,7 @@ static int moq_init(AVFormatContext *s)
     ecfg.insecure_skip_verify = ctx->insecure;
     if (ctx->ca_file)
         ecfg.ca_file = moq_bytes_cstr(ctx->ca_file);
-  
+
     if (ctx->draft) {
         ctx->version_buf[0]         = (moq_version_t)ctx->draft;
         ecfg.versions.policy        = MOQ_VERSION_POLICY_EXACT;
@@ -524,7 +524,7 @@ static int moq_init(AVFormatContext *s)
     }
     ecfg.versions.versions = ctx->version_buf;
     ecfg.versions.struct_size = sizeof(ecfg.versions);
-    
+
     moq_result_t res = moq_endpoint_connect(&ecfg, &ctx->ep);
     if (res != MOQ_OK)
         return moq_err(s, res, "Could not connect to the relay");
@@ -556,120 +556,120 @@ static uint64_t moq_timestamp(int64_t ts)
 
 static int moq_send_object(AVFormatContext *s, moq_media_track_t *track,
                            const MOQObject *moqObj) {
-  MOQContext *ctx = s->priv_data;
+    MOQContext *ctx = s->priv_data;
 
-  moq_rcbuf_t *payload = NULL;
-  moq_result_t res = moq_rcbuf_create(moq_alloc_default(), moqObj->data,
-                                      moqObj->size, &payload);
-  /* CMAF data was copied into rcbuf, so the mp4 buffer is free to reuse. */
-  if (ctx->mp4)
-    ffio_reset_dyn_buf(ctx->mp4->pb);
-  if (res != MOQ_OK)
-    return AVERROR(ENOMEM);
+    moq_rcbuf_t *payload = NULL;
+    moq_result_t res = moq_rcbuf_create(moq_alloc_default(), moqObj->data,
+                                        moqObj->size, &payload);
+    /* CMAF data was copied into rcbuf, so the mp4 buffer is free to reuse. */
+    if (ctx->mp4)
+        ffio_reset_dyn_buf(ctx->mp4->pb);
+    if (res != MOQ_OK)
+        return AVERROR(ENOMEM);
 
-  moq_media_send_object_t obj;
-  memset(&obj, 0, sizeof(obj));
-  obj.struct_size = sizeof(obj);
-  obj.payload = payload;
-  obj.properties = NULL;
-  obj.is_sync = moqObj->is_sync;
-  obj.starts_group = moqObj->starts_group;
-  obj.ends_group = moqObj->ends_group;
-  obj.presentation_time_us = moq_timestamp(moqObj->pts);
-  obj.decode_time_us = moq_timestamp(moqObj->dts);
-  obj.has_capture_time = 1;
-  obj.capture_time_us = moq_timestamp(moqObj->capture_time_us);
+    moq_media_send_object_t obj;
+    memset(&obj, 0, sizeof(obj));
+    obj.struct_size = sizeof(obj);
+    obj.payload = payload;
+    obj.properties = NULL;
+    obj.is_sync = moqObj->is_sync;
+    obj.starts_group = moqObj->starts_group;
+    obj.ends_group = moqObj->ends_group;
+    obj.presentation_time_us = moq_timestamp(moqObj->pts);
+    obj.decode_time_us = moq_timestamp(moqObj->dts);
+    obj.has_capture_time = 1;
+    obj.capture_time_us = moq_timestamp(moqObj->capture_time_us);
 
-  if (moq_is_cmaf(ctx) && moqObj->starts_group) {
-    obj.has_sap_type = 1;
-    obj.sap_type = s->streams[0]->codecpar->video_delay > 0 ? MOQ_SAP_TYPE_2
-                                                            : MOQ_SAP_TYPE_1;
-  }
+    if (moq_is_cmaf(ctx) && moqObj->starts_group) {
+        obj.has_sap_type = 1;
+        obj.sap_type = s->streams[0]->codecpar->video_delay > 0 ? MOQ_SAP_TYPE_2
+                                                                : MOQ_SAP_TYPE_1;
+    }
 
-  res = moq_media_sender_write(ctx->tx, track, &obj);
-  if (res == MOQ_OK)
-    return 0;
+    res = moq_media_sender_write(ctx->tx, track, &obj);
+    if (res == MOQ_OK)
+        return 0;
 
-  /* Ownership only transferred on MOQ_OK. */
-  moq_rcbuf_decref(payload);
+    /* Ownership only transferred on MOQ_OK. */
+    moq_rcbuf_decref(payload);
 
-  switch (res) {
-  case MOQ_ERR_WOULD_BLOCK:
-    return 0;
-  case MOQ_ERR_CLOSED:
-    av_log(s, AV_LOG_ERROR, "Relay closed the session (code 0x%" PRIx64 ")\n",
-           moq_media_sender_fatal_code(ctx->tx));
-    return AVERROR(EIO);
-  case MOQ_ERR_INTERRUPTED:
-    return AVERROR_EXIT;
-  default:
-    return moq_err(s, res, "Could not publish a media object");
-  }
+    switch (res) {
+    case MOQ_ERR_WOULD_BLOCK:
+        return 0;
+    case MOQ_ERR_CLOSED:
+        av_log(s, AV_LOG_ERROR, "Relay closed the session (code 0x%" PRIx64 ")\n",
+               moq_media_sender_fatal_code(ctx->tx));
+        return AVERROR(EIO);
+    case MOQ_ERR_INTERRUPTED:
+        return AVERROR_EXIT;
+    default:
+        return moq_err(s, res, "Could not publish a media object");
+    }
 }
 
 static int moq_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
-  MOQContext *ctx = s->priv_data;
-  const AVProducerReferenceTime *prft;
-  size_t prft_size;
-  uint8_t *nal_buf = NULL;
-  uint8_t *data;
-  int size;
-  int key;
-  int ret;
+    MOQContext *ctx = s->priv_data;
+    const AVProducerReferenceTime *prft;
+    size_t prft_size;
+    uint8_t *nal_buf = NULL;
+    uint8_t *data;
+    int size;
+    int key;
+    int ret;
 
-  if (!pkt->size)
-    return 0;
+    if (!pkt->size)
+        return 0;
 
-  if (pkt->pts == AV_NOPTS_VALUE && pkt->dts == AV_NOPTS_VALUE) {
-    av_log(s, AV_LOG_ERROR, "Packets carry no timestamps\n");
-    return AVERROR(EINVAL);
-  }
-  if (pkt->pts == AV_NOPTS_VALUE)
-    pkt->pts = pkt->dts;
-
-  key = !!(pkt->flags & AV_PKT_FLAG_KEY);
-
-  if (moq_is_cmaf(ctx)) {
-    ret = moq_fragment(s, pkt, &data, &size);
-    if (ret < 0)
-      return ret;
-    if (size <= 0)
-      return 0;
-  } else if (ctx->annexb) {
-    size = pkt->size;
-    ret = ff_nal_parse_units_buf(pkt->data, &nal_buf, &size);
-    if (ret < 0)
-      return ret;
-    if (size <= 0) {
-      av_free(nal_buf);
-      return 0;
+    if (pkt->pts == AV_NOPTS_VALUE && pkt->dts == AV_NOPTS_VALUE) {
+        av_log(s, AV_LOG_ERROR, "Packets carry no timestamps\n");
+        return AVERROR(EINVAL);
     }
-    data = nal_buf;
-  } else {
-    data = pkt->data;
-    size = pkt->size;
-  }
+    if (pkt->pts == AV_NOPTS_VALUE)
+        pkt->pts = pkt->dts;
 
-  prft = (const AVProducerReferenceTime *)av_packet_get_side_data(
-      pkt, AV_PKT_DATA_PRFT, &prft_size);
+    key = !!(pkt->flags & AV_PKT_FLAG_KEY);
 
-  MOQObject obj = {
-      .data = data,
-      .size = size,
-      .pts = pkt->pts,
-      .dts = pkt->dts,
-      .is_sync = key,
-      .starts_group = key,
-      .capture_time_us = prft && prft_size == sizeof(*prft) &&
-                                 prft->wallclock > 0
-                             ? prft->wallclock
-                             : av_gettime(),
-  };
+    if (moq_is_cmaf(ctx)) {
+        ret = moq_fragment(s, pkt, &data, &size);
+        if (ret < 0)
+            return ret;
+        if (size <= 0)
+            return 0;
+    } else if (ctx->annexb) {
+        size = pkt->size;
+        ret = ff_nal_parse_units_buf(pkt->data, &nal_buf, &size);
+        if (ret < 0)
+            return ret;
+        if (size <= 0) {
+            av_free(nal_buf);
+            return 0;
+        }
+        data = nal_buf;
+    } else {
+        data = pkt->data;
+        size = pkt->size;
+    }
 
-  ret = moq_send_object(s, ctx->track, &obj);
-  av_free(nal_buf);
-  return ret;
+    prft = (const AVProducerReferenceTime *)av_packet_get_side_data(
+        pkt, AV_PKT_DATA_PRFT, &prft_size);
+
+    MOQObject obj = {
+        .data = data,
+        .size = size,
+        .pts = pkt->pts,
+        .dts = pkt->dts,
+        .is_sync = key,
+        .starts_group = key,
+        .capture_time_us = prft && prft_size == sizeof(*prft) &&
+                                   prft->wallclock > 0
+                               ? prft->wallclock
+                               : av_gettime(),
+    };
+
+    ret = moq_send_object(s, ctx->track, &obj);
+    av_free(nal_buf);
+    return ret;
 }
 
 static int moq_write_trailer(AVFormatContext *s)
@@ -681,18 +681,18 @@ static int moq_write_trailer(AVFormatContext *s)
 
     // safeguard against partial init data
     if (ctx->mp4 && ctx->mp4->pb) {
-      uint8_t *tail = NULL;
-      int tail_len;
+        uint8_t *tail = NULL;
+        int tail_len;
 
-      av_write_trailer(ctx->mp4);
-      /* Nothing should be pending: one fragment is flushed per packet and
-        skip_trailer suppresses the mfra. */
-      tail_len = avio_get_dyn_buf(ctx->mp4->pb, &tail);
-      if (tail_len > 0)
-        av_log(s, AV_LOG_WARNING, "Discarding %d bytes of trailing CMAF data\n",
-               tail_len);
+        av_write_trailer(ctx->mp4);
+        /* Nothing should be pending: one fragment is flushed per packet and
+         * skip_trailer suppresses the mfra. */
+        tail_len = avio_get_dyn_buf(ctx->mp4->pb, &tail);
+        if (tail_len > 0)
+            av_log(s, AV_LOG_WARNING, "Discarding %d bytes of trailing CMAF data\n",
+                   tail_len);
 
-      ffio_reset_dyn_buf(ctx->mp4->pb);
+        ffio_reset_dyn_buf(ctx->mp4->pb);
     }
 
     if (ctx->track) {
@@ -737,11 +737,11 @@ static void moq_deinit(AVFormatContext *s)
     ctx->track = NULL;
 
     if (ctx->mp4) {
-      /* avformat_free_context does not touch pb, so the dynamic buffer has
-       * to go first. */
-      ffio_free_dyn_buf(&ctx->mp4->pb);
-      avformat_free_context(ctx->mp4);
-      ctx->mp4 = NULL;
+        /* avformat_free_context does not touch pb, so the dynamic buffer has
+         * to go first. */
+        ffio_free_dyn_buf(&ctx->mp4->pb);
+        avformat_free_context(ctx->mp4);
+        ctx->mp4 = NULL;
     }
 
     av_freep(&ctx->ns_buf);
