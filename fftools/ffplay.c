@@ -30,6 +30,7 @@
 #include <signal.h>
 #include <stdint.h>
 
+#include "libavutil/attributes.h"
 #include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/mathematics.h"
@@ -360,6 +361,10 @@ static int is_full_screen;
 static int64_t audio_callback_time;
 
 #define FF_QUIT_EVENT    (SDL_USEREVENT + 2)
+
+static volatile sig_atomic_t received_sigterm = 0;
+static volatile int received_nb_signals = 0;
+static int exit_status = 0;
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
@@ -1367,12 +1372,14 @@ static void do_exit(VideoState *is)
         printf("\n");
     SDL_Quit();
     av_log(NULL, AV_LOG_QUIET, "%s", "");
-    exit(0);
+    exit(exit_status);
 }
 
 static void sigterm_handler(int sig)
 {
-    exit(123);
+    received_sigterm = sig;
+    if (++received_nb_signals > 3)
+        exit(123);
 }
 
 static void set_default_window_size(int width, int height, AVRational sar)
@@ -3403,6 +3410,10 @@ static void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
     double remaining_time = 0.0;
     SDL_PumpEvents();
     while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT)) {
+        if (received_sigterm) {
+            exit_status = 123;
+            do_exit(is);
+        }
         if (!cursor_hidden && av_gettime_relative() - cursor_last_shown > CURSOR_HIDE_DELAY) {
             SDL_ShowCursor(0);
             cursor_hidden = 1;
@@ -3576,6 +3587,7 @@ static void event_loop(VideoState *cur_stream)
                     last_mouse_left_click = av_gettime_relative();
                 }
             }
+            av_fallthrough;
         case SDL_MOUSEMOTION:
             if (cursor_hidden) {
                 SDL_ShowCursor(1);
@@ -3627,6 +3639,7 @@ static void event_loop(VideoState *cur_stream)
                     }
                     if (vk_renderer)
                         vk_renderer_resize(vk_renderer, screen_width, screen_height);
+                    av_fallthrough;
                 case SDL_WINDOWEVENT_EXPOSED:
                     cur_stream->force_refresh = 1;
             }

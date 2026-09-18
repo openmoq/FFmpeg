@@ -1,3 +1,7 @@
+FATE_API_LIBAVCODEC-$(call ALLYES, LIBASTCENC_ENCODER LIBASTCENC_DECODER) += fate-api-astc-profile
+fate-api-astc-profile: $(APITESTSDIR)/api-astc-profile-test$(EXESUF)
+fate-api-astc-profile: CMD = run $(APITESTSDIR)/api-astc-profile-test$(EXESUF)
+
 FATE_API_LIBAVCODEC-$(call ENCDEC, FLAC, FLAC) += fate-api-flac
 fate-api-flac: $(APITESTSDIR)/api-flac-test$(EXESUF)
 fate-api-flac: CMD = run $(APITESTSDIR)/api-flac-test$(EXESUF)
@@ -28,6 +32,10 @@ fate-lavf-flv: KEEP_FILES ?= 1
 fate-lavf-flv: CMP =
 fate-api-seek: CMD = run $(APITESTSDIR)/api-seek-test$(EXESUF) $(TARGET_PATH)/tests/data/lavf/lavf.flv 0 720
 fate-api-seek: CMP = null
+
+FATE_API_LIBAVFORMAT-$(call ALLYES, MP4_MUXER ISMV_MUXER) += fate-api-movenc
+fate-api-movenc: $(APITESTSDIR)/api-movenc-test$(EXESUF)
+fate-api-movenc: CMD = run $(APITESTSDIR)/api-movenc-test$(EXESUF)
 
 FATE_API-$(HAVE_THREADS) += fate-api-threadmessage
 fate-api-threadmessage: $(APITESTSDIR)/api-threadmessage-test$(EXESUF)

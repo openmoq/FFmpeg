@@ -395,20 +395,14 @@ static void vtenc_reset(VTEncContext *vtctx)
         vtctx->supported_props = NULL;
     }
 
-    if (vtctx->color_primaries) {
-        CFRelease(vtctx->color_primaries);
-        vtctx->color_primaries = NULL;
-    }
-
-    if (vtctx->transfer_function) {
-        CFRelease(vtctx->transfer_function);
-        vtctx->transfer_function = NULL;
-    }
-
-    if (vtctx->ycbcr_matrix) {
-        CFRelease(vtctx->ycbcr_matrix);
-        vtctx->ycbcr_matrix = NULL;
-    }
+    /* The colorimetry fields hold references borrowed from CoreVideo (Get
+     * semantics). Releasing them would free CoreVideo's cached string for
+     * codepoints without a constant name, and later lookups of the same
+     * codepoint would hand out a dangling pointer.
+     */
+    vtctx->color_primaries = NULL;
+    vtctx->transfer_function = NULL;
+    vtctx->ycbcr_matrix = NULL;
 }
 
 static int vtenc_q_pop(VTEncContext *vtctx, bool wait, CMSampleBufferRef *buf, ExtraSEI *sei)
@@ -2459,8 +2453,8 @@ static int create_cv_pixel_buffer(AVCodecContext   *avctx,
     return 0;
 }
 
-static int create_encoder_dict_h264(const AVFrame *frame,
-                                    CFDictionaryRef* dict_out)
+static int create_encoder_dict(const AVFrame *frame,
+                               CFDictionaryRef* dict_out)
 {
     CFDictionaryRef dict = NULL;
     if (frame->pict_type == AV_PICTURE_TYPE_I) {
@@ -2493,7 +2487,7 @@ static int vtenc_send_frame(AVCodecContext *avctx,
     if (status)
         goto out;
 
-    status = create_encoder_dict_h264(frame, &frame_dict);
+    status = create_encoder_dict(frame, &frame_dict);
     if (status)
         goto out;
 
