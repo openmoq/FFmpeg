@@ -563,6 +563,8 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     char channel_config[16];
     const AVDictionaryEntry *lang = av_dict_get(trk->stream->metadata,
                                                 "language", NULL, 0);
+    const AVDictionaryEntry *label = av_dict_get(trk->stream->metadata,
+                                                 "moq_label", NULL, 0);
 
     moq_media_track_cfg_t tcfg;
     memset(&tcfg, 0, sizeof(tcfg));
@@ -602,6 +604,13 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     if (ret < 0)
         return ret;
 
+    ret = moq_group_tag(s, trk, "moq_render_group", &tcfg.has_render_group,
+                        &tcfg.render_group);
+    if (ret < 0)
+        return ret;
+    if (label && *label->value)
+        tcfg.label = moq_bytes_cstr(label->value);
+
     moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &trk->media);
     if (res != MOQ_OK)
         return moq_err(s, res, "Could not add the track");
@@ -614,6 +623,10 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
         av_log(s, AV_LOG_VERBOSE, ", lang %s", lang->value);
     if (tcfg.has_alt_group)
         av_log(s, AV_LOG_VERBOSE, ", altGroup %d", tcfg.alt_group);
+    if (tcfg.has_render_group)
+        av_log(s, AV_LOG_VERBOSE, ", renderGroup %d", tcfg.render_group);
+    if (tcfg.label.len)
+        av_log(s, AV_LOG_VERBOSE, ", label '%s'", label->value);
     av_log(s, AV_LOG_VERBOSE, ")\n");
 
     return 0;
