@@ -28,6 +28,8 @@
  * Objects carry either LOC or CMAF packaging (-moq_packaging); CMAF chunks
  * come from a chained mp4 muxer.
  */
+#include <errno.h>
+#include <limits.h>
 #include <string.h>
 
 #include <moq/codec_signaling.h>
@@ -527,6 +529,30 @@ static int moq_resolve_bitrate(AVFormatContext *s, MOQTrack *trk)
     return 0;
 }
 
+static int moq_group_tag(AVFormatContext *s, const MOQTrack *trk,
+                         const char *key, bool *has, int *out)
+{
+    const AVDictionaryEntry *e = av_dict_get(trk->stream->metadata, key,
+                                             NULL, 0);
+    char *end;
+    long v;
+
+    if (!e)
+        return 0;
+
+    errno = 0;
+    v = strtol(e->value, &end, 10);
+    if (end == e->value || *end || errno == ERANGE || v < 0 || v > INT_MAX) {
+        av_log(s, AV_LOG_ERROR, "Stream %d has %s='%s', which is not a "
+               "non-negative integer\n", trk->stream->index, key, e->value);
+        return AVERROR(EINVAL);
+    }
+
+    *out = v;
+    *has = true;
+    return 0;
+}
+
 static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
                          const uint8_t *init_data, size_t init_data_len) {
     MOQContext *ctx = s->priv_data;
@@ -571,6 +597,11 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     if (lang && *lang->value)
         tcfg.lang = moq_bytes_cstr(lang->value);
 
+    int ret = moq_group_tag(s, trk, "moq_alt_group", &tcfg.has_alt_group,
+                            &tcfg.alt_group);
+    if (ret < 0)
+        return ret;
+
     moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &trk->media);
     if (res != MOQ_OK)
         return moq_err(s, res, "Could not add the track");
@@ -581,6 +612,8 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
            (int)trk->codec_str_len, trk->codec_str, (int)tcfg.init_data.len);
     if (tcfg.lang.len)
         av_log(s, AV_LOG_VERBOSE, ", lang %s", lang->value);
+    if (tcfg.has_alt_group)
+        av_log(s, AV_LOG_VERBOSE, ", altGroup %d", tcfg.alt_group);
     av_log(s, AV_LOG_VERBOSE, ")\n");
 
     return 0;
