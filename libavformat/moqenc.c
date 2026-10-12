@@ -65,8 +65,6 @@
 
 #define MOQ_AUDIO_FRAGMENT_FRAMES_MAX 1024
 
-#define MOQ_MAX_TRACKS 2
-
 #define MOQ_CMAF_MOVFLAGS                                                      \
     "+cmaf+frag_custom+empty_moov+default_base_moof+skip_trailer"
 
@@ -192,6 +190,8 @@ typedef struct MOQTrack {
     int is_audio;
     const MOQCodecDesc *desc;
 
+    const char *name;
+
     char codec_str[MOQ_CODEC_STR_MAX];
     size_t codec_str_len;
 
@@ -209,8 +209,9 @@ typedef struct MOQTrack {
     uint64_t bitrate; /* max bitrate for the catalog; resolved at init */
     int no_duration_warned;
 
-    /* Audio only: frames sent in the open group. */
-    int frag_frames;
+
+    int fragment_frames;
+    int sent_frames;
 } MOQTrack;
 
 typedef struct MOQContext {
@@ -234,7 +235,8 @@ typedef struct MOQContext {
     moq_endpoint_t *ep;
     moq_media_sender_t *tx;
 
-    MOQTrack tracks[MOQ_MAX_TRACKS];
+    MOQTrack *tracks; /* one per AVStream, same index */
+    int nb_tracks;
 } MOQContext;
 
 typedef struct MOQObject {
@@ -442,8 +444,9 @@ static int moq_build_decoder_config(AVFormatContext *s, MOQTrack *trk,
     size_t len = 0;
 
     if (!src || codecpar->extradata_size <= 0) {
-        av_log(s, AV_LOG_ERROR, "The %s stream carries no decoder configuration\n",
-               is_audio ? "audio" : "video");
+        av_log(s, AV_LOG_ERROR, "The %s stream %d carries no decoder "
+               "configuration\n", is_audio ? "audio" : "video",
+               trk->stream->index);
         return AVERROR(EINVAL);
     }
 
@@ -514,10 +517,10 @@ static int moq_resolve_bitrate(AVFormatContext *s, MOQTrack *trk)
     } else if (codecpar->bit_rate > 0) {
         trk->bitrate = codecpar->bit_rate;
     } else {
-        av_log(s, AV_LOG_ERROR, "The %s stream has no bitrate, which the "
+        av_log(s, AV_LOG_ERROR, "The %s stream %d has no bitrate, which the "
                "catalog requires; set a maximum bitrate on the encoder "
                "(e.g. -maxrate:%c)\n", trk->is_audio ? "audio" : "video",
-               trk->is_audio ? 'a' : 'v');
+               trk->stream->index, trk->is_audio ? 'a' : 'v');
         return AVERROR(EINVAL);
     }
 
@@ -529,7 +532,7 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     MOQContext *ctx = s->priv_data;
     const AVCodecParameters *codecpar = trk->stream->codecpar;
     int is_audio = trk->is_audio;
-    const char *name = is_audio ? ctx->audio_track_name : ctx->video_track_name;
+    const char *name = trk->name;
     int cmaf = moq_is_cmaf(ctx);
     char channel_config[16];
 
@@ -569,9 +572,10 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
         return moq_err(s, res, "Could not add the track");
 
     av_log(s, AV_LOG_VERBOSE,
-           "Published %s %s track '%s' as %.*s (%d bytes of init data)\n",
+           "Published %s %s track '%s' as %.*s (%d bytes of init data",
            cmaf ? "CMAF" : "LOC", is_audio ? "audio" : "video", name,
            (int)trk->codec_str_len, trk->codec_str, (int)tcfg.init_data.len);
+    av_log(s, AV_LOG_VERBOSE, ")\n");
 
     return 0;
 }
@@ -618,10 +622,8 @@ static int moq_create_track(AVFormatContext *s, MOQTrack *trk) {
 }
 
 /* Auto: one second of audio per group, from the encoder's frame size. */
-static void moq_resolve_audio_group(AVFormatContext *s, const MOQTrack *trk,
-                                    const AVPacket *pkt)
+static void moq_resolve_audio_group(MOQTrack *trk, const AVPacket *pkt)
 {
-    MOQContext *ctx = s->priv_data;
     const AVCodecParameters *codecpar = trk->stream->codecpar;
     int64_t frame_size = codecpar->frame_size;
 
@@ -629,9 +631,9 @@ static void moq_resolve_audio_group(AVFormatContext *s, const MOQTrack *trk,
         frame_size = av_rescale_q(pkt->duration, trk->stream->time_base,
                                   (AVRational){ 1, codecpar->sample_rate });
 
-    ctx->audio_fragment_frames = 1;
+    trk->fragment_frames = 1;
     if (frame_size > 0 && codecpar->sample_rate > 0)
-        ctx->audio_fragment_frames =
+        trk->fragment_frames =
             av_clip64(av_rescale(codecpar->sample_rate, 1, frame_size),
                       1, MOQ_AUDIO_FRAGMENT_FRAMES_MAX);
 }
@@ -696,9 +698,35 @@ static int moq_capture_extradata(AVFormatContext *s, MOQTrack *trk,
 
     av_log(s, AV_LOG_VERBOSE,
            "Recovered %d bytes of %s decoder configuration from the first "
-           "packet\n", codecpar->extradata_size,
-           trk->is_audio ? "audio" : "video");
+           "packet of stream %d\n", codecpar->extradata_size,
+           trk->is_audio ? "audio" : "video", trk->stream->index);
 
+    return 0;
+}
+
+/* A lone stream of its type may fall back to the moq_*_track option; with
+ * several, each must be named through its moq_track metadata. */
+static int moq_resolve_track_name(AVFormatContext *s, MOQTrack *trk,
+                                  int nb_of_type)
+{
+    MOQContext *ctx = s->priv_data;
+    const AVDictionaryEntry *e = av_dict_get(trk->stream->metadata,
+                                             "moq_track", NULL, 0);
+    const char *name = e ? e->value : NULL;
+    char type = trk->is_audio ? 'a' : 'v';
+
+    if (!name && nb_of_type == 1)
+        name = trk->is_audio ? ctx->audio_track_name : ctx->video_track_name;
+
+    if (!name || !*name) {
+        av_log(s, AV_LOG_ERROR, "Stream %d needs a catalog track name: with "
+               "several %s streams, name each one with "
+               "-metadata:s:%c:N moq_track=NAME\n", trk->stream->index,
+               trk->is_audio ? "audio" : "video", type);
+        return AVERROR(EINVAL);
+    }
+
+    trk->name = name;
     return 0;
 }
 
@@ -717,29 +745,46 @@ static int moq_init(AVFormatContext *s)
         return AVERROR(EINVAL);
     }
 
-    if (s->nb_streams < 1 || s->nb_streams > MOQ_MAX_TRACKS) {
-        av_log(s, AV_LOG_ERROR,
-               "This muxer publishes one video stream and/or one audio "
-               "stream\n");
+    if (s->nb_streams < 1) {
+        av_log(s, AV_LOG_ERROR, "This muxer needs at least one video or "
+                                "audio stream\n");
         return AVERROR(EINVAL);
     }
 
-    int has_video = 0, has_audio = 0;
+    int nb_video = 0, nb_audio = 0;
+
+    for (int i = 0; i < s->nb_streams; i++) {
+        enum AVMediaType type = s->streams[i]->codecpar->codec_type;
+
+        if (type == AVMEDIA_TYPE_VIDEO) {
+            nb_video++;
+        } else if (type == AVMEDIA_TYPE_AUDIO) {
+            nb_audio++;
+        } else {
+            const char *type_name = av_get_media_type_string(type);
+            av_log(s, AV_LOG_ERROR, "Stream %d is %s; this muxer publishes "
+                   "only video and audio streams\n", i,
+                   type_name ? type_name : "unknown");
+            return AVERROR(EINVAL);
+        }
+    }
+
+    ctx->tracks = av_calloc(s->nb_streams, sizeof(*ctx->tracks));
+    if (!ctx->tracks)
+        return AVERROR(ENOMEM);
+    ctx->nb_tracks = s->nb_streams;
 
     for (int i = 0; i < s->nb_streams; i++) {
         MOQTrack *trk = &ctx->tracks[i];
         const AVCodecParameters *codecpar = s->streams[i]->codecpar;
 
-        if (codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !has_video) {
-            has_video = 1;
-        } else if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO && !has_audio) {
-            has_audio = 1;
-        } else {
-            av_log(s, AV_LOG_ERROR,
-                   "This muxer publishes one video stream "
-                   "and/or one audio stream\n");
-            return AVERROR(EINVAL);
-        }
+        trk->stream = s->streams[i];
+        trk->is_audio = codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
+
+        int ret = moq_resolve_track_name(s, trk,
+                                         trk->is_audio ? nb_audio : nb_video);
+        if (ret < 0)
+            return ret;
 
         trk->desc = moq_find_codec(codecpar->codec_id);
         if (!trk->desc) {
@@ -748,12 +793,11 @@ static int moq_init(AVFormatContext *s)
             return AVERROR(EINVAL);
         }
 
-        trk->stream = s->streams[i];
         trk->src_tb = s->streams[i]->time_base;
-        trk->is_audio = codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
         trk->ts_offset = AV_NOPTS_VALUE;
+        trk->fragment_frames = ctx->audio_fragment_frames;
 
-        int ret = moq_resolve_bitrate(s, trk);
+        ret = moq_resolve_bitrate(s, trk);
         if (ret < 0)
             return ret;
 
@@ -765,9 +809,17 @@ static int moq_init(AVFormatContext *s)
                 trk->frame_rate = fr;
         }
 
-
         avpriv_set_pts_info(s->streams[i], 64, 1, MOQ_TIMESCALE);
     }
+
+    for (int i = 0; i < ctx->nb_tracks; i++)
+        for (int j = 0; j < i; j++)
+            if (!strcmp(ctx->tracks[i].name, ctx->tracks[j].name)) {
+                av_log(s, AV_LOG_ERROR, "Streams %d and %d are both named "
+                       "'%s'; catalog track names must be unique\n", j, i,
+                       ctx->tracks[i].name);
+                return AVERROR(EINVAL);
+            }
 
     int ret = moq_split_namespace(s);
     if (ret < 0)
@@ -809,7 +861,7 @@ static int moq_init(AVFormatContext *s)
     if (res != MOQ_OK)
         return moq_err(s, res, "Could not attach the media sender");
 
-    for (int i = 0; i < s->nb_streams; i++) {
+    for (int i = 0; i < ctx->nb_tracks; i++) {
         MOQTrack *trk = &ctx->tracks[i];
 
         if (trk->stream->codecpar->extradata_size <= 0) {
@@ -823,7 +875,7 @@ static int moq_init(AVFormatContext *s)
             return ret;
     }
 
-    for (int i = 0; i < s->nb_streams; i++)
+    for (int i = 0; i < ctx->nb_tracks; i++)
         if (ctx->tracks[i].media)
             return moq_wait_ready(s);
 
@@ -959,13 +1011,13 @@ static int moq_write_packet(AVFormatContext *s, AVPacket *pkt)
     /* Video groups follow GOPs; audio groups span audio_fragment_frames. */
     starts_group = key;
     if (trk->is_audio) {
-        if (!ctx->audio_fragment_frames)
-            moq_resolve_audio_group(s, trk, pkt);
+        if (!trk->fragment_frames)
+            moq_resolve_audio_group(trk, pkt);
 
-        starts_group = !trk->frag_frames;
-        ends_group   = ++trk->frag_frames == ctx->audio_fragment_frames;
+        starts_group = !trk->sent_frames;
+        ends_group   = ++trk->sent_frames == trk->fragment_frames;
         if (ends_group)
-            trk->frag_frames = 0;
+            trk->sent_frames = 0;
     }
 
     MOQObject obj = {
@@ -994,7 +1046,7 @@ static int moq_write_trailer(AVFormatContext *s)
     if (!ctx->tx)
         return 0;
 
-    for (int i = 0; i < s->nb_streams; i++) {
+    for (int i = 0; i < ctx->nb_tracks; i++) {
         MOQTrack *trk = &ctx->tracks[i];
 
         if (!trk->media)
@@ -1059,12 +1111,14 @@ static void moq_deinit(AVFormatContext *s)
         moq_endpoint_destroy(ctx->ep);
         ctx->ep = NULL;
     }
-    for (int i = 0; i < MOQ_MAX_TRACKS; i++) {
+    for (int i = 0; i < ctx->nb_tracks; i++) {
         MOQTrack *trk = &ctx->tracks[i];
 
         trk->media = NULL;
         moq_close_fragmenter(trk);
     }
+    av_freep(&ctx->tracks);
+    ctx->nb_tracks = 0;
 
     av_freep(&ctx->ns_buf);
     ctx->ns_count = 0;
@@ -1074,8 +1128,8 @@ static void moq_deinit(AVFormatContext *s)
 #define ENC       AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
     { "moq_namespace", "Namespace to announce, hyphen-separated (e.g. demo-live)", OFFSET(namespace_str), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
-    { "moq_video_track", "Catalog name of the published video track", OFFSET(video_track_name), AV_OPT_TYPE_STRING, { .str = "video" }, 0, 0, ENC },
-    { "moq_audio_track", "Catalog name of the published audio track", OFFSET(audio_track_name), AV_OPT_TYPE_STRING, { .str = "audio" }, 0, 0, ENC },
+    { "moq_video_track", "Catalog name of the video track, when there is one video stream; several need -metadata:s:v:N moq_track=NAME", OFFSET(video_track_name), AV_OPT_TYPE_STRING, { .str = "video" }, 0, 0, ENC },
+    { "moq_audio_track", "Catalog name of the audio track, when there is one audio stream; several need -metadata:s:a:N moq_track=NAME", OFFSET(audio_track_name), AV_OPT_TYPE_STRING, { .str = "audio" }, 0, 0, ENC },
     { "moq_ca_file", "CA bundle used to verify the relay certificate", OFFSET(ca_file), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
     { "moq_insecure", "Skip relay certificate verification (testing only)", OFFSET(insecure), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, ENC },
     { "moq_draft", "MoQT draft to negotiate", OFFSET(draft), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 18, ENC, .unit = "draft" },
