@@ -535,6 +535,8 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     const char *name = trk->name;
     int cmaf = moq_is_cmaf(ctx);
     char channel_config[16];
+    const AVDictionaryEntry *lang = av_dict_get(trk->stream->metadata,
+                                                "language", NULL, 0);
 
     moq_media_track_cfg_t tcfg;
     memset(&tcfg, 0, sizeof(tcfg));
@@ -566,6 +568,8 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     }
 
     tcfg.bitrate = trk->bitrate;
+    if (lang && *lang->value)
+        tcfg.lang = moq_bytes_cstr(lang->value);
 
     moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &trk->media);
     if (res != MOQ_OK)
@@ -575,6 +579,8 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
            "Published %s %s track '%s' as %.*s (%d bytes of init data",
            cmaf ? "CMAF" : "LOC", is_audio ? "audio" : "video", name,
            (int)trk->codec_str_len, trk->codec_str, (int)tcfg.init_data.len);
+    if (tcfg.lang.len)
+        av_log(s, AV_LOG_VERBOSE, ", lang %s", lang->value);
     av_log(s, AV_LOG_VERBOSE, ")\n");
 
     return 0;
