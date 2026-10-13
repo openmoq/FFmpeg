@@ -55,7 +55,10 @@
 
 #define MOQ_CODEC_STR_MAX 64
 
-#define MOQ_AVCC_FIRST_BYTE 0x01
+#define MOQ_NAL_RECORD_VERSION 0x01
+
+/* AV1CodecConfigurationRecord marker bit */
+#define MOQ_AV1C_MARKER 0x80
 
 /* The "40" in "mp4a.40.2". */
 #define MOQ_AAC_OTI 0x40
@@ -79,16 +82,115 @@ enum {
     MOQ_PKG_CMAF,
 };
 
-static const enum AVCodecID moq_supported_codecs[] = {
-    AV_CODEC_ID_H264,
-    AV_CODEC_ID_AAC,
+enum MOQLocInit {
+    MOQ_LOC_INIT_DECODER_CONFIG,
+    MOQ_LOC_INIT_EXTRADATA,
 };
 
+typedef moq_codec_source_format_t (*MOQSourceProbe)(const uint8_t *extradata,
+                                                    int *is_annexb);
+
+static moq_codec_source_format_t moq_probe_avc(const uint8_t *extradata,
+                                               int *is_annexb)
+{
+    if (extradata[0] == MOQ_NAL_RECORD_VERSION)
+        return MOQ_CODEC_SOURCE_AVC_AVCC;
+
+    *is_annexb = 1;
+    return MOQ_CODEC_SOURCE_AVC_ANNEXB;
+}
+
+static moq_codec_source_format_t moq_probe_hevc(const uint8_t *extradata,
+                                                int *is_annexb)
+{
+    if (extradata[0] == MOQ_NAL_RECORD_VERSION)
+        return MOQ_CODEC_SOURCE_HEVC_HVCC;
+
+    *is_annexb = 1;
+    return MOQ_CODEC_SOURCE_HEVC_ANNEXB;
+}
+
+static moq_codec_source_format_t moq_probe_av1(const uint8_t *extradata,
+                                               int *is_annexb)
+{
+    return extradata[0] & MOQ_AV1C_MARKER ? MOQ_CODEC_SOURCE_AV1_AV1C
+                                          : MOQ_CODEC_SOURCE_AV1_OBU;
+}
+
+typedef struct MOQCodecDesc {
+    enum AVCodecID codec_id;
+
+    /* Codecs with one extradata format set source_format; the rest probe. */
+    moq_codec_source_format_t source_format;
+    MOQSourceProbe probe;
+
+    moq_codec_config_format_t config_format;
+    const char *codec_prefix;
+
+    uint8_t object_type_indication;
+
+    uint32_t sample_entry;
+
+    enum MOQLocInit loc_init;
+
+    uint32_t decoded_sample_rate;
+} MOQCodecDesc;
+
+static const MOQCodecDesc moq_codecs[] = {
+    {
+        .codec_id      = AV_CODEC_ID_H264,
+        .probe         = moq_probe_avc,
+        .config_format = MOQ_CODEC_CONFIG_AVCC,
+        .codec_prefix  = "avc1",
+        .sample_entry  = MKTAG('a', 'v', 'c', '1'),
+    },
+    {
+        .codec_id      = AV_CODEC_ID_HEVC,
+        .probe         = moq_probe_hevc,
+        .config_format = MOQ_CODEC_CONFIG_HVCC,
+        .codec_prefix  = "hvc1",
+        .sample_entry  = MKTAG('h', 'v', 'c', '1'),
+    },
+    {
+        .codec_id      = AV_CODEC_ID_AV1,
+        .probe         = moq_probe_av1,
+        .config_format = MOQ_CODEC_CONFIG_AV1C,
+        .codec_prefix  = "av01",
+        .sample_entry  = MKTAG('a', 'v', '0', '1'),
+    },
+    {
+        .codec_id      = AV_CODEC_ID_AAC,
+        .source_format = MOQ_CODEC_SOURCE_AAC_ASC,
+        .config_format = MOQ_CODEC_CONFIG_AAC_ASC,
+        .codec_prefix  = "mp4a",
+        .object_type_indication = MOQ_AAC_OTI,
+        .sample_entry  = MKTAG('m', 'p', '4', 'a'),
+    },
+    {
+        .codec_id      = AV_CODEC_ID_OPUS,
+        .source_format = MOQ_CODEC_SOURCE_OPUS_HEAD,
+        .config_format = MOQ_CODEC_CONFIG_OPUS,
+        .codec_prefix  = "opus",
+        .sample_entry  = MKTAG('O', 'p', 'u', 's'),
+        .loc_init      = MOQ_LOC_INIT_EXTRADATA,
+        .decoded_sample_rate = 48000,
+    },
+};
+
+static const MOQCodecDesc *moq_find_codec(enum AVCodecID id)
+{
+    for (int i = 0; i < FF_ARRAY_ELEMS(moq_codecs); i++)
+        if (moq_codecs[i].codec_id == id)
+            return &moq_codecs[i];
+
+    return NULL;
+}
 
 typedef struct MOQTrack {
     AVStream *stream;
     moq_media_track_t *media;
     int is_audio;
+    const MOQCodecDesc *desc;
 
     char codec_str[MOQ_CODEC_STR_MAX];
     size_t codec_str_len;
@@ -246,7 +348,7 @@ static int moq_open_fragmenter(AVFormatContext *s, MOQTrack *trk,
     if ((ret = avcodec_parameters_copy(cst->codecpar, stream->codecpar)) < 0)
         return ret;
 
-    cst->codecpar->codec_tag = 0;
+    cst->codecpar->codec_tag = trk->desc->sample_entry;
     cst->time_base = trk->src_tb;
 
     if ((ret = avio_open_dyn_buf(&c->pb)) < 0)
@@ -330,8 +432,9 @@ static int moq_fragment(AVFormatContext *s, MOQTrack *trk, AVPacket *pkt,
     return 0;
 }
 
-static int moq_build_codec_config(AVFormatContext *s, MOQTrack *trk,
-                                  uint8_t **init_data, size_t *init_data_len) {
+static int moq_build_decoder_config(AVFormatContext *s, MOQTrack *trk,
+                                    uint8_t **decoder_config,
+                                    size_t *decoder_config_len) {
     const AVCodecParameters *codecpar = trk->stream->codecpar;
     const uint8_t *src = codecpar->extradata;
     int is_audio = trk->is_audio;
@@ -348,14 +451,10 @@ static int moq_build_codec_config(AVFormatContext *s, MOQTrack *trk,
     moq_codec_init_data_cfg_init(&icfg);
     icfg.source.data = src;
     icfg.source.len = codecpar->extradata_size;
-    if (is_audio) {
-        icfg.source_format = MOQ_CODEC_SOURCE_AAC_ASC;
-    } else {
-        icfg.source_format = src[0] == MOQ_AVCC_FIRST_BYTE
-                                 ? MOQ_CODEC_SOURCE_AVC_AVCC
-                                 : MOQ_CODEC_SOURCE_AVC_ANNEXB;
-        trk->is_annexb = icfg.source_format == MOQ_CODEC_SOURCE_AVC_ANNEXB;
-    }
+    trk->is_annexb = 0;
+    icfg.source_format = trk->desc->probe
+                       ? trk->desc->probe(src, &trk->is_annexb)
+                       : trk->desc->source_format;
 
     moq_result_t res = moq_codec_init_data_build(&icfg, NULL, 0, &len);
     if (res != MOQ_ERR_BUFFER)
@@ -371,29 +470,31 @@ static int moq_build_codec_config(AVFormatContext *s, MOQTrack *trk,
         return moq_err(s, res, "Could not build the decoder configuration");
     }
 
+    *decoder_config = buf;
+    *decoder_config_len = len;
+
+    return 0;
+}
+
+static int moq_format_codec_string(AVFormatContext *s, MOQTrack *trk,
+                                   const uint8_t *decoder_config,
+                                   size_t decoder_config_len) {
+    const MOQCodecDesc *desc = trk->desc;
+
     moq_codec_string_cfg_t scfg;
     moq_codec_string_cfg_init(&scfg);
-    scfg.decoder_config.data = buf;
-    scfg.decoder_config.len = len;
-    if (is_audio) {
-        scfg.config_format = MOQ_CODEC_CONFIG_AAC_ASC;
-        scfg.sample_entry = moq_bytes_cstr("mp4a");
-        scfg.has_mp4_object_type_indication = 1;
-        scfg.mp4_object_type_indication = MOQ_AAC_OTI;
-    } else {
-        scfg.config_format = MOQ_CODEC_CONFIG_AVCC;
-        scfg.sample_entry = moq_bytes_cstr("avc1");
-    }
+    scfg.decoder_config.data = decoder_config;
+    scfg.decoder_config.len = decoder_config_len;
+    scfg.config_format = desc->config_format;
+    scfg.sample_entry = moq_bytes_cstr(desc->codec_prefix);
+    scfg.has_mp4_object_type_indication = desc->object_type_indication != 0;
+    scfg.mp4_object_type_indication = desc->object_type_indication;
 
-    res = moq_codec_string_format(&scfg, (uint8_t *)trk->codec_str,
-                                  sizeof(trk->codec_str), &trk->codec_str_len);
-    if (res != MOQ_OK) {
-        av_free(buf);
+    moq_result_t res = moq_codec_string_format(&scfg, (uint8_t *)trk->codec_str,
+                                               sizeof(trk->codec_str),
+                                               &trk->codec_str_len);
+    if (res != MOQ_OK)
         return moq_err(s, res, "Could not format the codec string");
-    }
-
-    *init_data = buf;
-    *init_data_len = len;
 
     return 0;
 }
@@ -448,7 +549,9 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
     if (is_audio) {
         snprintf(channel_config, sizeof(channel_config), "%d",
                  codecpar->ch_layout.nb_channels);
-        tcfg.samplerate = codecpar->sample_rate;
+        tcfg.samplerate = trk->desc->decoded_sample_rate
+                              ? trk->desc->decoded_sample_rate
+                              : codecpar->sample_rate;
         tcfg.channel_config = moq_bytes_cstr(channel_config);
     } else {
         tcfg.width = codecpar->width;
@@ -474,24 +577,39 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
 }
 
 static int moq_create_track(AVFormatContext *s, MOQTrack *trk) {
-    uint8_t *init_data = NULL;
-    size_t init_data_len = 0;
+    const AVCodecParameters *codecpar = trk->stream->codecpar;
+    uint8_t *decoder_config = NULL, *init_segment = NULL;
+    size_t decoder_config_len = 0, init_data_len = 0;
+    const uint8_t *init_data;
     int ret;
 
-    ret = moq_build_codec_config(s, trk, &init_data, &init_data_len);
+    ret = moq_build_decoder_config(s, trk, &decoder_config,
+                                   &decoder_config_len);
     if (ret < 0)
         return ret;
 
+    ret = moq_format_codec_string(s, trk, decoder_config, decoder_config_len);
+    if (ret < 0) {
+        av_free(decoder_config);
+        return ret;
+    }
+
     if (moq_is_cmaf(s->priv_data)) {
-        av_freep(&init_data);
-        init_data_len = 0;
-        ret = moq_open_fragmenter(s, trk, &init_data, &init_data_len);
+        ret = moq_open_fragmenter(s, trk, &init_segment, &init_data_len);
+        init_data = init_segment;
+    } else if (trk->desc->loc_init == MOQ_LOC_INIT_EXTRADATA) {
+        init_data     = codecpar->extradata;
+        init_data_len = codecpar->extradata_size;
+    } else {
+        init_data     = decoder_config;
+        init_data_len = decoder_config_len;
     }
 
     if (ret >= 0)
         ret = moq_add_track(s, trk, init_data, init_data_len);
 
-    av_free(init_data);
+    av_free(decoder_config);
+    av_free(init_segment);
 
     if (ret < 0)
         moq_close_fragmenter(trk);
@@ -586,11 +704,7 @@ static int moq_capture_extradata(AVFormatContext *s, MOQTrack *trk,
 
 static int moq_query_codec(enum AVCodecID id, int std_compliance)
 {
-    for (int i = 0; i < FF_ARRAY_ELEMS(moq_supported_codecs); i++) {
-        if (moq_supported_codecs[i] == id)
-            return 1;
-    }
-    return 0;
+    return moq_find_codec(id) != NULL;
 }
 
 static int moq_init(AVFormatContext *s)
@@ -605,8 +719,8 @@ static int moq_init(AVFormatContext *s)
 
     if (s->nb_streams < 1 || s->nb_streams > MOQ_MAX_TRACKS) {
         av_log(s, AV_LOG_ERROR,
-               "This muxer publishes one h264 video stream "
-               "and/or one aac audio stream\n");
+               "This muxer publishes one video stream and/or one audio "
+               "stream\n");
         return AVERROR(EINVAL);
     }
 
@@ -627,7 +741,8 @@ static int moq_init(AVFormatContext *s)
             return AVERROR(EINVAL);
         }
 
-        if (!moq_query_codec(codecpar->codec_id, 0)) {
+        trk->desc = moq_find_codec(codecpar->codec_id);
+        if (!trk->desc) {
             av_log(s, AV_LOG_ERROR, "Unsupported codec %s\n",
                    avcodec_get_name(codecpar->codec_id));
             return AVERROR(EINVAL);
@@ -697,8 +812,7 @@ static int moq_init(AVFormatContext *s)
     for (int i = 0; i < s->nb_streams; i++) {
         MOQTrack *trk = &ctx->tracks[i];
 
-        if (trk->stream->codecpar->extradata_size <= 0 &&
-            trk->stream->codecpar->codec_id == AV_CODEC_ID_AAC) {
+        if (trk->stream->codecpar->extradata_size <= 0) {
             av_log(s, AV_LOG_VERBOSE,
                    "Stream %d carries no decoder configuration yet; its track "
                    "is published once the first packet supplies one\n", i);
@@ -988,6 +1102,10 @@ static int moq_check_bitstream(AVFormatContext *s, AVStream *st,
     if (st->codecpar->codec_id == AV_CODEC_ID_AAC && pkt->size > 2 &&
         (AV_RB16(pkt->data) & 0xfff0) == 0xfff0)
       return ff_stream_add_bitstream_filter(st, "aac_adtstoasc", NULL);
+
+    if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+        st->codecpar->extradata_size <= 0)
+        return ff_stream_add_bitstream_filter(st, "extract_extradata", NULL);
 
     return 1;
 }
