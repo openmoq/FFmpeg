@@ -765,12 +765,13 @@ static int moq_resolve_track_name(AVFormatContext *s, MOQTrack *trk,
     const AVDictionaryEntry *e = av_dict_get(trk->stream->metadata,
                                              "moq_track", NULL, 0);
     const char *name = e ? e->value : NULL;
-    char type = trk->is_audio ? 'a' : 'v';
 
     if (!name && nb_of_type == 1)
         name = trk->is_audio ? ctx->audio_track_name : ctx->video_track_name;
 
     if (!name || !*name) {
+        char type = trk->is_audio ? 'a' : 'v';
+
         av_log(s, AV_LOG_ERROR, "Stream %d needs a catalog track name: with "
                "several %s streams, name each one with "
                "-metadata:s:%c:N moq_track=NAME\n", trk->stream->index,
@@ -864,14 +865,16 @@ static int moq_init(AVFormatContext *s)
         avpriv_set_pts_info(s->streams[i], 64, 1, MOQ_TIMESCALE);
     }
 
-    for (int i = 0; i < ctx->nb_tracks; i++)
-        for (int j = 0; j < i; j++)
+    for (int i = 0; i < ctx->nb_tracks; i++) {
+        for (int j = 0; j < i; j++) {
             if (!strcmp(ctx->tracks[i].name, ctx->tracks[j].name)) {
                 av_log(s, AV_LOG_ERROR, "Streams %d and %d are both named "
                        "'%s'; catalog track names must be unique\n", j, i,
                        ctx->tracks[i].name);
                 return AVERROR(EINVAL);
             }
+        }
+    }
 
     int ret = moq_split_namespace(s);
     if (ret < 0)
