@@ -359,6 +359,9 @@ static int moq_open_fragmenter(AVFormatContext *s, MOQTrack *trk,
         return ret;
 
     av_dict_set(&opts, "movflags", MOQ_CMAF_MOVFLAGS, 0);
+    /* Wallclock prft per chunk: the CMAF counterpart of LOC's capture time. */
+    if (!(s->flags & AVFMT_FLAG_BITEXACT))
+        av_dict_set(&opts, "write_prft", "wallclock", 0);
 
     if (trk->frame_rate.num > 0)
         av_dict_set_int(&opts, "video_track_timescale", trk->frame_rate.num, 0);
