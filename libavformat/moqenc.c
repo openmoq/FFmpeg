@@ -608,8 +608,10 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
                         &tcfg.render_group);
     if (ret < 0)
         return ret;
-    if (label && *label->value)
+    if (label && *label->value) {
+        tcfg.has_label = 1;
         tcfg.label = moq_bytes_cstr(label->value);
+    }
 
     moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &trk->media);
     if (res != MOQ_OK)
