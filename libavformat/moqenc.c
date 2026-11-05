@@ -276,6 +276,63 @@ static int moq_err(AVFormatContext *s, moq_result_t res, const char *what)
     }
 }
 
+static int moq_is_literal(int c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+static int moq_hex_digit(int c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    return -1;
+}
+
+/* Decodes one namespace field in place from MoQT's serialized name form
+ * (draft-ietf-moq-transport-18 §1.5): a-z, A-Z, 0-9 and _ stand for
+ * themselves, any other byte is '.' and two lowercase hex digits.
+ * Returns the decoded length, or an error for a non-canonical field. */
+static int moq_decode_field(AVFormatContext *s, char *field)
+{
+    const char *in = field;
+    char *out = field;
+
+    while (*in) {
+        int hi, lo, c = (unsigned char)*in;
+
+        if (moq_is_literal(c)) {
+            *out++ = *in++;
+            continue;
+        }
+        if (c != '.') {
+            if (c > ' ' && c < 0x7f)
+                av_log(s, AV_LOG_ERROR, "moq_namespace: write '%c' as .%02x\n", c, c);
+            else
+                av_log(s, AV_LOG_ERROR, "moq_namespace: write byte 0x%02x as .%02x\n", c, c);
+            return AVERROR(EINVAL);
+        }
+        hi = moq_hex_digit(in[1]);
+        lo = hi < 0 ? -1 : moq_hex_digit(in[2]);
+        if (lo < 0) {
+            av_log(s, AV_LOG_ERROR, "moq_namespace: '.' must be followed by "
+                                    "two lowercase hex digits\n");
+            return AVERROR(EINVAL);
+        }
+        c = hi << 4 | lo;
+        if (moq_is_literal(c)) {
+            av_log(s, AV_LOG_ERROR, "moq_namespace: write .%c%c as '%c'\n",
+                   in[1], in[2], c);
+            return AVERROR(EINVAL);
+        }
+        *out++ = c;
+        in += 3;
+    }
+    return out - field;
+}
+
 static int moq_split_namespace(AVFormatContext *s)
 {
     MOQContext *ctx = s->priv_data;
@@ -296,14 +353,19 @@ static int moq_split_namespace(AVFormatContext *s)
         if (hyphen)
             *hyphen = '\0';
         if (*p) {
+            int len;
+
             if (ctx->ns_count == MOQ_NS_PARTS_MAX) {
                 av_log(s, AV_LOG_ERROR, "moq_namespace has more than %d "
                                         "components\n",
                        MOQ_NS_PARTS_MAX);
                 return AVERROR(EINVAL);
             }
+            len = moq_decode_field(s, p);
+            if (len < 0)
+                return len;
             ctx->ns_parts[ctx->ns_count].data = (const uint8_t *)p;
-            ctx->ns_parts[ctx->ns_count].len  = strlen(p);
+            ctx->ns_parts[ctx->ns_count].len  = len;
             ctx->ns_count++;
         }
         if (!hyphen)
@@ -1187,7 +1249,7 @@ static void moq_deinit(AVFormatContext *s)
 #define OFFSET(x) offsetof(MOQContext, x)
 #define ENC       AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "moq_namespace", "Namespace to announce, hyphen-separated (e.g. demo-live)", OFFSET(namespace_str), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
+    { "moq_namespace", "Namespace to announce in MoQT's serialized name form: fields joined by '-', bytes other than a-z, A-Z, 0-9 and _ as .xx (e.g. demo-live, example.2enet-live)", OFFSET(namespace_str), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
     { "moq_video_track", "Catalog name of the video track, when there is one video stream; several need -metadata:s:v:N moq_track=NAME", OFFSET(video_track_name), AV_OPT_TYPE_STRING, { .str = "video" }, 0, 0, ENC },
     { "moq_audio_track", "Catalog name of the audio track, when there is one audio stream; several need -metadata:s:a:N moq_track=NAME", OFFSET(audio_track_name), AV_OPT_TYPE_STRING, { .str = "audio" }, 0, 0, ENC },
     { "moq_ca_file", "CA bundle used to verify the relay certificate", OFFSET(ca_file), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
