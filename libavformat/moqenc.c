@@ -359,6 +359,9 @@ static int moq_open_fragmenter(AVFormatContext *s, MOQTrack *trk,
         return ret;
 
     av_dict_set(&opts, "movflags", MOQ_CMAF_MOVFLAGS, 0);
+    /* Wallclock prft per chunk: the CMAF counterpart of LOC's capture time. */
+    if (!(s->flags & AVFMT_FLAG_BITEXACT))
+        av_dict_set(&opts, "write_prft", "wallclock", 0);
 
     if (trk->frame_rate.num > 0)
         av_dict_set_int(&opts, "video_track_timescale", trk->frame_rate.num, 0);
@@ -608,8 +611,10 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
                         &tcfg.render_group);
     if (ret < 0)
         return ret;
-    if (label && *label->value)
+    if (label && *label->value) {
+        tcfg.has_label = 1;
         tcfg.label = moq_bytes_cstr(label->value);
+    }
 
     moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &trk->media);
     if (res != MOQ_OK)
