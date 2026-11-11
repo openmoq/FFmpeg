@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+#
+# build-libmoq - builds libmoq (openmoq/moq5 with its pinned picoquic and
+# picotls) as static libraries, against the OpenSSL from build-openssl, for
+# build-ffmpeg-moq to find with pkg-config.
+#
+#   build-libmoq                    build into <work dir>/deps/libmoq
+#   build-libmoq --print-deps-key   cache key of what it builds
+#
+# On Windows libmoq only builds with MSVC: run this from Git Bash in an x64
+# MSVC developer environment. x264 and ffmpeg are then built with MSVC too.
+#
+# Environment (optional): MOQ5_REPO and MOQ5_REF (default: .libmoq-version),
+# MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+version_file="${script_dir}/.libmoq-version"
+
+[ -r "${version_file}" ] || die "missing ${version_file}"
+while IFS='=' read -r key value; do
+    case ${key} in
+    MOQ5_REPO | MOQ5_REF) [ -n "${!key:-}" ] || eval "${key}=\${value}" ;;
+    esac
+done < <(grep -E '^(MOQ5_REPO|MOQ5_REF)=' "${version_file}")
+[ -n "${MOQ5_REPO:-}" ] || die "MOQ5_REPO not set in ${version_file}"
+[ -n "${MOQ5_REF:-}" ] || die "MOQ5_REF not set in ${version_file}"
+
+moq_cflags=''
+# picoquic's sockets need the RFC 3542 IPv6 socket options.
+[ "${platform}" != macos ] || moq_cflags='-D__APPLE_USE_RFC_3542'
+
+moq5_revision=$(resolve_revision "${MOQ5_REPO}" "${MOQ5_REF}")
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    printf '%s-moq5_%s\n' "${platform_id}" "${moq5_revision}"
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+require_dep OpenSSL "${openssl_prefix}" build-openssl
+require_msvc
+
+stamp="${libmoq_prefix}/.revision"
+src_dir="${deps_dir}/moq5"
+libmoq_build="${deps_dir}/libmoq-build"
+# libmoq embeds the OpenSSL it was built against.
+stamp_value="${moq5_revision} openssl-$(cat "${openssl_prefix}/.version")"
+
+moq_features=(
+    -DMOQ_BUILD_SERVICE=ON
+    -DMOQ_BUILD_MSF=ON
+    -DMOQ_BUILD_CMAF=ON
+    -DMOQ_BUILD_LOC=ON
+    -DMOQ_BUILD_MEDIA_OBJECT=ON
+    -DMOQ_BUILD_CODEC_SIGNALING=ON
+    # The muxer connects to moqt:// (QUIC) and https:// (WebTransport) URLs.
+    -DMOQ_BUILD_ADAPTER_PICOQUIC=ON
+    -DMOQ_BUILD_PQ_THREADED=ON
+    -DMOQ_BUILD_ADAPTER_PICO_WT=ON
+    -DMOQ_BUILD_PICO_WT_MANAGED=ON
+    -DMOQ_BUILD_TESTS=OFF
+    -DMOQ_BUILD_EXAMPLES=OFF
+)
+
+fetch_moq5() {
+    log "Fetching libmoq ${moq5_revision} (${MOQ5_REF}) from ${MOQ5_REPO}..."
+    rm -rf "${libmoq_build}" "${libmoq_prefix}" "${picoquic_deps}" "${src_dir}"
+    mkdir -p "${src_dir}"
+    git -C "${src_dir}" init -q
+    git -C "${src_dir}" remote add origin "${MOQ5_REPO}"
+    git -C "${src_dir}" fetch --depth 1 --quiet origin "${moq5_revision}"
+    git -C "${src_dir}" checkout -q --force FETCH_HEAD
+}
+
+# The revisions package-ffmpeg-moq writes into each package's BUILDINFO.txt.
+finish() {
+    {
+        printf '  libmoq    %s @ %s\n' "${MOQ5_REPO}" "${moq5_revision}"
+        printf '  picoquic  %s\n' "$(git -C "${picoquic_deps}/picoquic" rev-parse HEAD)"
+        printf '  picotls   %s\n' "$(git -C "${picoquic_deps}/picotls" rev-parse HEAD)"
+    } >"${libmoq_prefix}/buildinfo"
+    rm -rf "${src_dir}" "${libmoq_build}"
+    printf '%s\n' "${stamp_value}" >"${stamp}"
+}
+
+build_libmoq() {
+    fetch_moq5
+
+    log 'Setting up pinned picoquic + picotls...'
+    # Without GITHUB_ENV, so its paths stay out of the later workflow steps.
+    quiet picoquic env -u GITHUB_ENV \
+        MOQ_DEPS_DIR="${picoquic_deps}" \
+        OPENSSL_ROOT_DIR="${openssl_prefix}" \
+        CFLAGS="${moq_cflags}" \
+        "${src_dir}/scripts/setup_picoquic_deps.sh"
+
+    log 'Building libmoq...'
+    quiet libmoq env CFLAGS="${moq_cflags}" \
+        cmake -S "${src_dir}" -B "${libmoq_build}" -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_INSTALL_PREFIX="${libmoq_prefix}" \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DOPENSSL_ROOT_DIR="${openssl_prefix}" \
+        -DOPENSSL_USE_STATIC_LIBS=ON \
+        "${moq_features[@]}" \
+        -DMOQ_PICOQUIC_SOURCE_DIR="${picoquic_deps}/picoquic" \
+        -DMOQ_PICOTLS_PREFIX="${picotls_build}" \
+        -DMOQ_PTLS_LIB_DIR="${picotls_build}"
+    quiet libmoq cmake --build "${libmoq_build}" --parallel "${jobs}"
+    quiet libmoq cmake --install "${libmoq_build}"
+    finish
+}
+
+# Windows: moq5's static libraries with the static C runtime, as its own CI
+# builds them.
+build_libmoq_windows() {
+    # picoquic's setup script needs a pkg-config; only for this build.
+    local tools_root="${work_dir}/tools"
+    local pkgconf="${tools_root}/${vcpkg_triplet}/tools/pkgconf/pkgconf.exe"
+
+    if [ ! -f "${pkgconf}" ]; then
+        log 'Installing pkgconf from vcpkg...'
+        vcpkg_install pkgconf "${tools_root}" pkgconf
+    fi
+
+    # The static C runtime everywhere: cl appends _CL_ to every command line,
+    # which reaches picotls too, whose CMake predates
+    # CMAKE_MSVC_RUNTIME_LIBRARY. -Z7 puts the debug info in the objects, so
+    # it ends up in ffmpeg's PDB.
+    export _CL_='-MT -Z7'
+    export CC=cl CXX=cl CMAKE_GENERATOR=Ninja
+
+    fetch_moq5
+
+    log 'Setting up pinned picoquic + picotls...'
+    quiet picoquic env -u GITHUB_ENV \
+        MOQ_DEPS_DIR="${picoquic_deps}" \
+        OPENSSL_ROOT_DIR="$(native "${openssl_prefix}")" \
+        PKG_CONFIG="$(native "${pkgconf}")" \
+        "${BASH}" "${src_dir}/scripts/setup_picoquic_deps.sh"
+    [ -f "${picotls_build}/picotls-core.lib" ] \
+        || die "picotls-core.lib is not in ${picotls_build}:" \
+            "$(find "${picotls_build}" -name 'picotls*.lib')"
+
+    log 'Building libmoq (MSVC)...'
+    quiet libmoq cmake -S "$(native "${src_dir}")" -B "$(native "${libmoq_build}")" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POLICY_DEFAULT_CMP0091=NEW \
+        -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+        -DCMAKE_INSTALL_PREFIX="$(native "${libmoq_prefix}")" \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DOPENSSL_ROOT_DIR="$(native "${openssl_prefix}")" \
+        "${moq_features[@]}" \
+        -DMOQ_PICOQUIC_SOURCE_DIR="$(native "${picoquic_deps}/picoquic")" \
+        -DMOQ_PICOTLS_PREFIX="$(native "${picotls_build}")" \
+        -DMOQ_PTLS_LIB_DIR="$(native "${picotls_build}")"
+    quiet libmoq cmake --build "$(native "${libmoq_build}")" --parallel "${jobs}"
+    quiet libmoq cmake --install "$(native "${libmoq_build}")"
+
+    # moq5's .pc files are written for Unix linkers. For MSVC they need
+    # MOQ_STATIC, which CMake gives moq-core's consumers but libmoq.pc does
+    # not (without it the headers declare every function dllimport), vcpkg's
+    # names for the OpenSSL libraries, and the Windows system libraries in
+    # place of pthread.
+    sed -i -e 's/ -lssl -lcrypto/ -llibssl -llibcrypto/' \
+        -e 's/ -lpthread/ -lws2_32 -liphlpapi -lcrypt32 -ladvapi32 -luser32 -lbcrypt/' \
+        "${libmoq_prefix}"/lib/pkgconfig/*.pc
+    sed -i '/^Cflags:/ s/$/ -DMOQ_STATIC/' "${libmoq_prefix}/lib/pkgconfig/libmoq.pc"
+    finish
+}
+
+if up_to_date "${stamp}" "${stamp_value}"; then
+    log "libmoq ${moq5_revision:0:10} already installed, skipping build"
+elif [ "${platform}" = windows ]; then
+    build_libmoq_windows
+else
+    build_libmoq
+fi

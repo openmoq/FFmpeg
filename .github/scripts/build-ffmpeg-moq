@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# build-ffmpeg-moq - configures and builds ffmpeg with the moq muxer in
+# <work dir>/ffmpeg, linking libmoq, x264 and (on Windows) zlib statically
+# through pkg-config, from what the build-* scripts installed.
+#
+#   build-ffmpeg-moq
+#
+# On Windows ffmpeg is built with MSVC, like libmoq: run it from an MSYS2
+# shell that inherits an x64 MSVC developer environment.
+#
+# Environment (optional): MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+[ $# -eq 0 ] || die "unknown argument: $1"
+
+require_dep libmoq "${libmoq_prefix}" build-libmoq
+require_dep x264 "${x264_prefix}" build-x264
+pkg_config_path="${libmoq_prefix}/lib/pkgconfig:${x264_prefix}/lib/pkgconfig"
+configure_args=(
+    # Link nothing the build host happens to have.
+    --disable-autodetect
+    --pkg-config-flags=--static
+    --enable-gpl
+    --enable-libx264
+    --enable-libmoq
+    --enable-zlib
+    --disable-doc
+    --disable-ffplay
+)
+if [ "${platform}" = windows ]; then
+    require_dep zlib "${zlib_prefix}" build-zlib
+    require_msvc
+    pkg_config_path="${pkg_config_path}:${zlib_prefix}/lib/pkgconfig"
+    configure_args+=(--toolchain=msvc)
+fi
+
+log 'Configuring ffmpeg...'
+rm -rf "${build_dir}"
+mkdir -p "${build_dir}"
+cd "${build_dir}"
+PKG_CONFIG_PATH="${pkg_config_path}" \
+    "${project_root}/configure" "${configure_args[@]}" \
+    || { tail -n 60 ffbuild/config.log >&2; die 'ffmpeg configure failed'; }
+
+log 'Building ffmpeg...'
+make -j"${jobs}"

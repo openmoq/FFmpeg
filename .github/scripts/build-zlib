@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# build-zlib - installs a static zlib from vcpkg on Windows, for
+# build-ffmpeg-moq to find with pkg-config. Linux and macOS link the system
+# zlib, so there it does nothing.
+#
+#   build-zlib                    install into <work dir>/deps/zlib
+#   build-zlib --print-deps-key   cache key of what it installs
+#
+# Environment: VCPKG_INSTALLATION_ROOT; MOQ_WORK_DIR (optional).
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    printf '%s-zlib-vcpkg\n' "${platform_id}"
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+if [ "${platform}" != windows ]; then
+    log "${platform} links the system zlib, nothing to build"
+    exit 0
+fi
+
+if [ -r "${zlib_prefix}/buildinfo" ]; then
+    log 'zlib already installed, skipping vcpkg'
+    exit 0
+fi
+
+log "Installing zlib from vcpkg (${vcpkg_triplet})..."
+rm -rf "${deps_dir}/zlib"
+vcpkg_install zlib "${deps_dir}/zlib" zlib
+printf '  zlib      %s (vcpkg %s, static)\n' \
+    "$(pc_version "${zlib_prefix}/lib/pkgconfig/zlib.pc")" "${vcpkg_triplet}" \
+    >"${zlib_prefix}/buildinfo"

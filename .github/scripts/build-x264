@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# build-x264 - builds x264 as a static library, for build-ffmpeg-moq to find
+# with pkg-config.
+#
+#   build-x264                    build into <work dir>/deps/x264
+#   build-x264 --print-deps-key   cache key of what it builds
+#
+# On Windows it is built with MSVC, like libmoq: run it from an MSYS2 shell
+# that inherits an x64 MSVC developer environment.
+#
+# Environment (optional): X264_REPO and X264_REF, MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+X264_REPO="${X264_REPO:-https://code.videolan.org/videolan/x264.git}"
+X264_REF="${X264_REF:-b35605ace3ddf7c1a5d67a2eb553f034aef41d55}"
+
+x264_revision=$(resolve_revision "${X264_REPO}" "${X264_REF}")
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    printf '%s-x264_%s\n' "${platform_id}" "${x264_revision:0:10}"
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+require_msvc
+
+stamp="${x264_prefix}/.revision"
+src_dir="${deps_dir}/x264-src"
+
+if up_to_date "${stamp}" "${x264_revision}"; then
+    log "x264 ${x264_revision:0:10} already installed, skipping build"
+    exit 0
+fi
+
+log "Building x264 ${x264_revision:0:10} (static)..."
+# A full clone: x264 takes its version from the commit count.
+rm -rf "${src_dir}" "${x264_prefix}"
+mkdir -p "${deps_dir}"
+git clone --quiet "${X264_REPO}" "${src_dir}"
+git -C "${src_dir}" checkout --quiet --detach "${x264_revision}"
+(
+    cd "${src_dir}"
+    if [ "${platform}" = windows ]; then
+        # A Windows path in x264.pc, for cl.
+        quiet x264 env CC=cl ./configure --prefix="$(native "${x264_prefix}")" \
+            --enable-static --disable-cli
+    else
+        quiet x264 ./configure --prefix="${x264_prefix}" \
+            --enable-static --enable-pic --disable-cli
+    fi
+    quiet x264 make -j"${jobs}"
+    quiet x264 make install
+)
+rm -rf "${src_dir}"
+printf '  x264      %s @ %s\n' "${X264_REPO}" "${x264_revision}" >"${x264_prefix}/buildinfo"
+printf '%s\n' "${x264_revision}" >"${stamp}"

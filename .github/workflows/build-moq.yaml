@@ -1,0 +1,424 @@
+name: Build (MoQ)
+run-name: ${{ github.ref_name }} MoQ build 🚀
+# Runs by hand (Actions > Build (MoQ) > Run workflow), or for a moq-* tag,
+# which also drafts the release.
+on:
+  workflow_dispatch:
+    inputs:
+      moq5_ref:
+        description: openmoq/moq5 commit, branch or ref to build libmoq from (empty uses .github/scripts/.libmoq-version)
+        required: false
+        type: string
+  push:
+    # The fork carries upstream's own tags (n8.0, ...); only ours make a release.
+    tags: ['moq-*']
+permissions:
+  contents: read
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.ref }}'
+  cancel-in-progress: false
+jobs:
+  linux-build:
+    name: Build for Linux ${{ matrix.arch }} 🐧
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # glibc 2.35: the binary runs on distributions from 2022 on.
+    container: ubuntu:22.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      MOQ5_REF: ${{ inputs.moq5_ref }}
+    steps:
+      # git before the checkout, which otherwise downloads a tarball.
+      - name: Install Build Tools 🔧
+        run: |
+          : Install Build Tools 🔧
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git curl perl nasm \
+            xz-utils zlib1g-dev ca-certificates
+
+      - uses: actions/checkout@v7
+
+      - name: Resolve Dependency Revisions
+        id: deps
+        run: |
+          : Resolve Dependency Revisions
+          # The workspace belongs to the runner's user, not to the container's root.
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+          echo "openssl=$(.github/scripts/build-openssl --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "libmoq=$(.github/scripts/build-libmoq --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/openssl
+          key: ffmpeg-moq-openssl-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-openssl', '.github/scripts/common.sh') }}
+
+      - name: Build OpenSSL 🔐
+        run: |
+          : Build OpenSSL 🔐
+          .github/scripts/build-openssl
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.moq-build/deps/libmoq
+            ${{ github.workspace }}/.moq-build/deps/picoquic
+          key: ffmpeg-moq-libmoq-${{ steps.deps.outputs.libmoq }}-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-libmoq', '.github/scripts/common.sh') }}
+
+      - name: Build libmoq 🧩
+        run: |
+          : Build libmoq 🧩
+          .github/scripts/build-libmoq
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/x264
+          key: ffmpeg-moq-x264-${{ steps.deps.outputs.x264 }}-${{ hashFiles('.github/scripts/build-x264', '.github/scripts/common.sh') }}
+
+      - name: Build x264 🎞️
+        run: |
+          : Build x264 🎞️
+          .github/scripts/build-x264
+
+      - name: Build ffmpeg 🧱
+        run: |
+          : Build ffmpeg 🧱
+          .github/scripts/build-ffmpeg-moq
+
+      - name: Check ffmpeg 🧪
+        run: |
+          : Check ffmpeg 🧪
+          .github/scripts/check-ffmpeg-moq
+
+      - name: Package ffmpeg 📦
+        run: |
+          : Package ffmpeg 📦
+          .github/scripts/package-ffmpeg-moq
+
+      - name: Upload Artifacts 📡
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-linux-${{ matrix.arch }}
+          path: ${{ github.workspace }}/.moq-build/out/*.tar.xz
+          if-no-files-found: error
+
+      - name: Upload Debug Symbol Artifacts 🪲
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-linux-${{ matrix.arch }}-debug
+          path: ${{ github.workspace }}/.moq-build/out/debug/*
+          retention-days: 14
+
+      - name: Upload Build Logs 📜
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-linux-${{ matrix.arch }}-logs
+          path: |
+            ${{ github.workspace }}/.moq-build/logs
+            ${{ github.workspace }}/.moq-build/ffmpeg/ffbuild/config.log
+
+  macos-build:
+    name: Build for macOS ${{ matrix.arch }} 🍏
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            brew: ninja pkgconf xz
+          # x264 and FFmpeg need nasm for their x86 assembly.
+          - arch: x86_64
+            runner: macos-15-intel
+            brew: ninja pkgconf xz nasm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      MOQ5_REF: ${{ inputs.moq5_ref }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Build Tools 🔧
+        run: |
+          : Install Build Tools 🔧
+          brew install --quiet ${{ matrix.brew }}
+
+      - name: Resolve Dependency Revisions
+        id: deps
+        run: |
+          : Resolve Dependency Revisions
+          echo "openssl=$(.github/scripts/build-openssl --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "libmoq=$(.github/scripts/build-libmoq --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/openssl
+          key: ffmpeg-moq-openssl-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-openssl', '.github/scripts/common.sh') }}
+
+      - name: Build OpenSSL 🔐
+        run: |
+          : Build OpenSSL 🔐
+          .github/scripts/build-openssl
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.moq-build/deps/libmoq
+            ${{ github.workspace }}/.moq-build/deps/picoquic
+          key: ffmpeg-moq-libmoq-${{ steps.deps.outputs.libmoq }}-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-libmoq', '.github/scripts/common.sh') }}
+
+      - name: Build libmoq 🧩
+        run: |
+          : Build libmoq 🧩
+          .github/scripts/build-libmoq
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/x264
+          key: ffmpeg-moq-x264-${{ steps.deps.outputs.x264 }}-${{ hashFiles('.github/scripts/build-x264', '.github/scripts/common.sh') }}
+
+      - name: Build x264 🎞️
+        run: |
+          : Build x264 🎞️
+          .github/scripts/build-x264
+
+      - name: Build ffmpeg 🧱
+        run: |
+          : Build ffmpeg 🧱
+          .github/scripts/build-ffmpeg-moq
+
+      - name: Check ffmpeg 🧪
+        run: |
+          : Check ffmpeg 🧪
+          .github/scripts/check-ffmpeg-moq
+
+      - name: Package ffmpeg 📦
+        run: |
+          : Package ffmpeg 📦
+          .github/scripts/package-ffmpeg-moq
+
+      - name: Upload Artifacts 📡
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-macos-${{ matrix.arch }}
+          path: ${{ github.workspace }}/.moq-build/out/*.tar.xz
+          if-no-files-found: error
+
+      - name: Upload Debug Symbol Artifacts 🪲
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-macos-${{ matrix.arch }}-debug
+          path: ${{ github.workspace }}/.moq-build/out/debug/*
+          retention-days: 14
+
+      - name: Upload Build Logs 📜
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-macos-${{ matrix.arch }}-logs
+          path: |
+            ${{ github.workspace }}/.moq-build/logs
+            ${{ github.workspace }}/.moq-build/ffmpeg/ffbuild/config.log
+
+  windows-build:
+    name: Build for Windows x86_64 🪟
+    # libmoq only builds with MSVC, so ffmpeg and x264 are built with it too,
+    # from MSYS2 for configure and make.
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      MOQ5_REF: ${{ inputs.moq5_ref }}
+    steps:
+      # Before the checkout: configure cannot run with CRLF line endings.
+      - name: Keep Line Endings
+        shell: bash
+        run: |
+          : Keep Line Endings
+          git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      - name: Install Build Tools 🔧
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: MINGW64
+          update: false
+          # The MSVC environment set up below.
+          path-type: inherit
+          install: >-
+            git make diffutils zip
+            mingw-w64-x86_64-binutils mingw-w64-x86_64-nasm mingw-w64-x86_64-pkgconf
+
+      - name: Set Up MSVC Environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Resolve Dependency Revisions
+        id: deps
+        shell: bash
+        run: |
+          : Resolve Dependency Revisions
+          echo "openssl=$(.github/scripts/build-openssl --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "libmoq=$(.github/scripts/build-libmoq --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "zlib=$(.github/scripts/build-zlib --print-deps-key)" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/openssl
+          key: ffmpeg-moq-openssl-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-openssl', '.github/scripts/common.sh') }}
+
+      - name: Build OpenSSL 🔐
+        shell: bash
+        run: |
+          : Build OpenSSL 🔐
+          .github/scripts/build-openssl
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.moq-build/deps/libmoq
+            ${{ github.workspace }}/.moq-build/deps/picoquic
+          key: ffmpeg-moq-libmoq-${{ steps.deps.outputs.libmoq }}-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-libmoq', '.github/scripts/common.sh') }}
+
+      - name: Build libmoq 🧩
+        shell: bash
+        run: |
+          : Build libmoq 🧩
+          .github/scripts/build-libmoq
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/x264
+          key: ffmpeg-moq-x264-${{ steps.deps.outputs.x264 }}-${{ hashFiles('.github/scripts/build-x264', '.github/scripts/common.sh') }}
+
+      - name: Build x264 🎞️
+        shell: msys2 {0}
+        run: |
+          : Build x264 🎞️
+          .github/scripts/build-x264
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/zlib
+          key: ffmpeg-moq-zlib-${{ steps.deps.outputs.zlib }}-${{ hashFiles('.github/scripts/build-zlib', '.github/scripts/common.sh') }}
+
+      - name: Build zlib 🗜️
+        shell: bash
+        run: |
+          : Build zlib 🗜️
+          .github/scripts/build-zlib
+
+      - name: Build ffmpeg 🧱
+        shell: msys2 {0}
+        run: |
+          : Build ffmpeg 🧱
+          .github/scripts/build-ffmpeg-moq
+
+      - name: Check ffmpeg 🧪
+        shell: msys2 {0}
+        run: |
+          : Check ffmpeg 🧪
+          .github/scripts/check-ffmpeg-moq
+
+      - name: Package ffmpeg 📦
+        shell: msys2 {0}
+        run: |
+          : Package ffmpeg 📦
+          # MSYS2 has its own git configuration.
+          git config --global --add safe.directory "$(pwd)"
+
+          .github/scripts/package-ffmpeg-moq
+
+      # The build's checks ran in MSYS2, where a missing DLL can still be on
+      # PATH; this runs the zip on plain Windows.
+      - name: Run the Package Without MSYS2 🧪
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem "$env:GITHUB_WORKSPACE/.moq-build/out/*.zip"
+          Expand-Archive -Path $package.FullName -DestinationPath "$env:RUNNER_TEMP/package"
+          $ffmpeg = (Get-ChildItem "$env:RUNNER_TEMP/package/*/ffmpeg.exe").FullName
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $ErrorActionPreference = 'Continue'
+
+          $muxers = & $ffmpeg -hide_banner -muxers 2>$null | Out-String
+          if ($muxers -notmatch '(?m)^\s*E\s+moq\s') { throw "the moq muxer is missing (exit $LASTEXITCODE)" }
+
+          & $ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -f null -
+          if ($LASTEXITCODE -ne 0) { throw "libx264 encode failed (exit $LASTEXITCODE)" }
+
+          $publish = & $ffmpeg -hide_banner -nostdin -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -b:v 1M -maxrate 1M -bufsize 2M -f moq -moq_namespace test moqt://127.0.0.1:4443/test 2>&1 | Out-String
+          Write-Host $publish
+          if ($publish -notmatch 'Timed out after') { throw "expected the relay timeout (exit $LASTEXITCODE)" }
+          exit 0
+
+      - name: Upload Artifacts 📡
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-windows-x86_64
+          path: ${{ github.workspace }}/.moq-build/out/*.zip
+          if-no-files-found: error
+
+      - name: Upload Debug Symbol Artifacts 🪲
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-windows-x86_64-debug
+          path: ${{ github.workspace }}/.moq-build/out/debug/*
+          retention-days: 14
+
+      - name: Upload Build Logs 📜
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-moq-windows-x86_64-logs
+          path: |
+            ${{ github.workspace }}/.moq-build/logs
+            ${{ github.workspace }}/.moq-build/ffmpeg/ffbuild/config.log
+
+  create-release:
+    name: Create Release 🛫
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    needs: [linux-build, macos-build, windows-build]
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download Build Artifacts 📥
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ffmpeg-moq-*
+          merge-multiple: true
+
+      - name: Generate Checksums 🪪
+        run: |
+          : Generate Checksums 🪪
+          sha256sum -- ffmpeg-moq-* > SHA256SUMS
+
+      - name: Create Release 🛫
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          tag_name: ${{ github.ref_name }}
+          name: ffmpeg with the MoQ muxer ${{ github.ref_name }}
+          files: |
+            ffmpeg-moq-*
+            SHA256SUMS
