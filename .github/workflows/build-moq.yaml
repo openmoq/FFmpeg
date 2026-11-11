@@ -401,6 +401,11 @@ jobs:
       run:
         shell: bash
     steps:
+      # Before the downloads: the checkout would clean them away.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+
       - name: Download Build Artifacts 📥
         uses: actions/download-artifact@v8
         with:
@@ -412,6 +417,11 @@ jobs:
           : Generate Checksums 🪪
           sha256sum -- ffmpeg-moq-* > SHA256SUMS
 
+      - name: Write Release Notes 🪪
+        run: |
+          : Write Release Notes 🪪
+          .github/scripts/release-notes "${GITHUB_REF_NAME}" . > "${RUNNER_TEMP}/release-notes.md"
+
       - name: Create Release 🛫
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -419,6 +429,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
           tag_name: ${{ github.ref_name }}
           name: ffmpeg with the MoQ muxer ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/release-notes.md
           files: |
             ffmpeg-moq-*
             SHA256SUMS

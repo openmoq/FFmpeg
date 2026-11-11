@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#
+# release-notes - writes the body of a release from .github/release-notes.md.
+#
+#   .github/scripts/release-notes <tag> <dir>
+#
+# <dir> holds the release's packages; the revisions are read from the Linux
+# x86_64 package's BUILDINFO.txt. The change sections follow OBS Studio's
+# release notes and are filled in by hand on the draft.
+
+set -euo pipefail
+shopt -s extglob nullglob
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+project_root=$(cd "${script_dir}/../.." && pwd)
+
+die() { printf 'release-notes: %s\n' "$*" >&2; exit 1; }
+
+[ $# -eq 2 ] || die "usage: $0 <tag> <dir>"
+version=${1#moq-}
+files_dir=$2
+[ -d "${files_dir}" ] || die "not a directory: ${files_dir}"
+
+section() {
+    printf '%s\n%s\n\n* _Describe the change._\n\n' "$1" "$(printf '%*s' "${#1}" '' | tr ' ' '-')"
+}
+
+changes=$(
+    case ${version} in
+    +([0-9]).+([0-9]).+([0-9])-beta+([0-9]))
+        section "Beta ${version##*-beta} Changes" ;;
+    +([0-9]).+([0-9]).+([0-9])-rc+([0-9]))
+        section "Release Candidate ${version##*-rc} Changes" ;;
+    +([0-9]).+([0-9]).0)
+        minor=${version%.0}
+        section "${minor} New Features"
+        section "${minor} Changes"
+        section "${minor} Bug Fixes" ;;
+    +([0-9]).+([0-9]).+([0-9]))
+        section "${version} Hotfix Changes" ;;
+    *)
+        section "${version} Changes" ;;
+    esac
+)
+
+packages=("${files_dir}"/ffmpeg-moq-linux-x86_64-*.tar.xz)
+[ ${#packages[@]} -eq 1 ] || die "expected one Linux x86_64 package in ${files_dir}"
+buildinfo=$(tar -xJOf "${packages[0]}" --wildcards '*/BUILDINFO.txt')
+
+# The value of "  <name>  [<repo> @ ]<value>" in the revision list.
+info() {
+    awk -v name="$1" '/^  [^ ]/ && $1 == name { print $NF; exit }' <<<"${buildinfo}"
+}
+ffmpeg_rev=$(info ffmpeg)
+moq5_sha=$(info libmoq)
+[ -n "${ffmpeg_rev}" ] && [ -n "${moq5_sha}" ] || die "no revisions in BUILDINFO.txt"
+openssl_version=$(awk '/^  [^ ]/ && $1 == "OpenSSL" { print $2; exit }' <<<"${buildinfo}")
+
+checksums=$(
+    cd "${files_dir}"
+    for file in ffmpeg-moq-*; do
+        printf '    %s: %s\n' "${file}" "$(sha256sum "${file}" | cut -d ' ' -f 1)"
+    done | sort
+)
+
+template=$(cat "${project_root}/.github/release-notes.md")
+fill() { template=${template//"{{$1}}"/"$2"}; }
+fill CHANGES "${changes}"
+fill REV "${ffmpeg_rev}"
+fill FFMPEG_REV "${ffmpeg_rev}"
+fill MOQ5_SHA "${moq5_sha}"
+fill MOQ5_SHORT "${moq5_sha:0:10}"
+fill PICOQUIC_SHORT "$(info picoquic | cut -c1-10)"
+fill PICOTLS_SHORT "$(info picotls | cut -c1-10)"
+fill X264_SHORT "$(info x264 | cut -c1-10)"
+fill OPENSSL_VERSION "${openssl_version}"
+fill CHECKSUMS "${checksums}"
+printf '%s\n' "${template}"
