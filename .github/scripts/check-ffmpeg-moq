@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# check-ffmpeg-moq - checks the ffmpeg that build-ffmpeg-moq built: the moq
+# muxer is there, x264 encodes, and the binaries need nothing beyond what
+# every machine has. On Windows it also publishes to a closed port.
+#
+#   check-ffmpeg-moq
+#
+# Environment (optional): MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+[ $# -eq 0 ] || die "unknown argument: $1"
+[ -x "${build_dir}/ffmpeg${exe}" ] || die "no ffmpeg in ${build_dir}: run build-ffmpeg-moq first"
+cd "${build_dir}"
+
+log 'Checking the moq muxer and x264...'
+./ffmpeg -hide_banner -muxers 2>/dev/null | grep -Eq '^[[:space:]]*E[[:space:]]+moq[[:space:]]' \
+    || die 'the moq muxer is missing'
+./ffmpeg -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -f null - \
+    || die 'libx264 encode failed'
+
+log 'Checking the runtime dependencies...'
+# Only what every machine has: the C library, zlib and the OS itself.
+binaries=(./ffmpeg)
+case ${platform} in
+macos)
+    allowed='^(/usr/lib/lib(System\.B|z\.1|c\+\+\.1|objc\.A)\.dylib|/System/Library/Frameworks/)'
+    ;;
+windows)
+    allowed='^(kernel32|advapi32|user32|gdi32|ole32|oleaut32|shell32|shlwapi|ws2_32|bcrypt|crypt32|iphlpapi|psapi|avicap32|msvfw32)\.dll$'
+    binaries=(./ffmpeg.exe ./ffprobe.exe)
+    ;;
+*)
+    allowed='^(linux-vdso\.so|/lib.*/ld-linux|lib(c|m|z|dl|pthread|rt)\.so)'
+    ;;
+esac
+for binary in "${binaries[@]}"; do
+    unexpected=$(runtime_deps "${binary}" | grep -Ev "${allowed}" || true)
+    [ -z "${unexpected}" ] \
+        || die "unexpected dynamic dependencies of ${binary}: ${unexpected//$'\n'/ }"
+done
+
+[ "${platform}" = windows ] || exit 0
+# With no relay listening the muxer has to time out. An "internal error"
+# instead means Winsock was not initialised (moq5#37).
+log 'Publishing to a closed port...'
+output=$(./ffmpeg -hide_banner -nostdin -loglevel error \
+    -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 \
+    -b:v 1M -maxrate 1M -bufsize 2M \
+    -f moq -moq_namespace test moqt://127.0.0.1:4443/test 2>&1) \
+    && die 'publishing to a closed port succeeded'
+printf '%s\n' "${output}" | grep -q 'Timed out after' \
+    || die "expected the relay timeout, got: ${output}"

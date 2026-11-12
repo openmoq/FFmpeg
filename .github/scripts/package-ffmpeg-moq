@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# package-ffmpeg-moq - packages the ffmpeg that build-ffmpeg-moq built into
+# <work dir>/out: ffmpeg and ffprobe with BUILDINFO.txt and the license, and
+# the debug symbols apart in out/debug.
+#
+#   package-ffmpeg-moq
+#
+# Environment (optional): MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+[ $# -eq 0 ] || die "unknown argument: $1"
+[ -x "${build_dir}/ffmpeg${exe}" ] || die "no ffmpeg in ${build_dir}: run build-ffmpeg-moq first"
+cd "${build_dir}"
+
+deps=("${x264_prefix}" "${libmoq_prefix}" "${openssl_prefix}")
+[ "${platform}" != windows ] || deps+=("${zlib_prefix}")
+
+ffmpeg_revision=$(git -C "${project_root}" rev-parse --short=10 HEAD)
+git -C "${project_root}" diff --quiet HEAD || ffmpeg_revision="${ffmpeg_revision}-dirty"
+name="ffmpeg-moq-${platform}-${arch}-${ffmpeg_revision}"
+stage="${out_dir}/${name}"
+
+log "Packaging ${name}..."
+rm -rf "${out_dir}"
+mkdir -p "${stage}" "${out_dir}/debug"
+cp "ffmpeg${exe}" "ffprobe${exe}" "${project_root}/COPYING.GPLv2" "${stage}/"
+{
+    printf 'ffmpeg with the MoQ muxer (libmoq), %s %s.\n\n' "${platform}" "${arch}"
+    printf '  ffmpeg    %s\n' "${ffmpeg_revision}"
+    for dep in "${deps[@]}"; do
+        cat "${dep}/buildinfo"
+    done
+    printf '\n'
+    case ${platform} in
+    windows)
+        printf 'Built on:\n  %s, %s\n' \
+            "$(cmd //c ver 2>/dev/null | tr -d '\r' | grep . || echo Windows)" \
+            "$({ cl 2>&1 || true; } | tr -d '\r' | grep -m1 '^Microsoft')"
+        printf 'Runs on:\n  Windows 10 or later, x86_64\n\n'
+        ;;
+    macos)
+        printf 'Built on:\n  macOS %s, %s\n' "$(sw_vers -productVersion)" \
+            "$(xcrun clang --version | head -1)"
+        printf 'Runs on:\n  macOS %s or later\n\n' "${MACOSX_DEPLOYMENT_TARGET}"
+        ;;
+    *)
+        printf 'Built on:\n  %s, %s\n\n' \
+            "$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-unknown}")" \
+            "$(ldd --version | head -1)"
+        ;;
+    esac
+    printf 'configure:\n  %s\n\n' "$(sed -n 's/^FFMPEG_CONFIGURATION=//p' ffbuild/config.mak)"
+    printf 'Runtime dependencies:\n'
+    runtime_deps "ffmpeg${exe}" | awk '{print "  " $1}' | sort -u
+    if [ "${platform}" = windows ]; then
+        printf '\nCheck it runs:  ffmpeg.exe -hide_banner -h muxer=moq\n\n'
+    else
+        printf '\nCheck it runs:  ./ffmpeg -hide_banner -h muxer=moq\n\n'
+    fi
+    if [ "${platform}" = macos ]; then
+        printf 'The binaries are not signed. If macOS blocks them after a browser\n'
+        printf 'download, run:  xattr -d com.apple.quarantine ffmpeg ffprobe\n\n'
+    fi
+    printf 'A -dirty suffix means the build came from an uncommitted tree and is\n'
+    printf 'not reproducible.\n\n'
+    printf 'Built with --enable-gpl --enable-libx264: this binary is GPLv2 or later\n'
+    printf '(see COPYING.GPLv2). The sources are the revisions listed above.\n'
+} >"${stage}/BUILDINFO.txt"
+
+if [ "${platform}" = windows ]; then
+    (cd "${out_dir}" && zip -qr "${name}.zip" "${name}")
+else
+    tar -C "${out_dir}" -cJf "${out_dir}/${name}.tar.xz" "${name}"
+fi
+rm -rf "${stage}"
+
+# Debug symbols for the stripped binaries, apart from the package.
+case ${platform} in
+macos)
+    quiet dsymutil dsymutil ffmpeg_g -o "${out_dir}/${name}.dSYM"
+    ditto -c -k --keepParent "${out_dir}/${name}.dSYM" "${out_dir}/debug/${name}.dSYM.zip"
+    rm -rf "${out_dir}/${name}.dSYM"
+    ;;
+windows)
+    # MSVC keeps the debug info in the PDBs, not in the binaries.
+    zip -qj "${out_dir}/debug/${name}.debug.zip" ./*.pdb
+    ;;
+*)
+    xz -T0 -c ffmpeg_g >"${out_dir}/debug/${name}.debug.xz"
+    ;;
+esac
+
+ls -lR "${out_dir}" >&2

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#
+# build-openssl - builds OpenSSL as static libraries for libmoq. Windows
+# takes it from vcpkg instead.
+#
+#   build-openssl                    build into <work dir>/deps/openssl
+#   build-openssl --print-deps-key   cache key of what it builds
+#
+# Environment (optional): OPENSSL_VERSION and OPENSSL_SHA256, MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.7}"
+OPENSSL_SHA256="${OPENSSL_SHA256:-a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8}"
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    if [ "${platform}" = windows ]; then
+        printf '%s-openssl-vcpkg\n' "${platform_id}"
+    else
+        printf '%s-openssl%s\n' "${platform_id}" "${OPENSSL_VERSION}"
+    fi
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+stamp="${openssl_prefix}/.version"
+mkdir -p "${deps_dir}"
+
+# macOS has no sha256sum.
+check_sha256() {
+    local sum=$1 file=$2
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s  %s\n' "${sum}" "${file}" | sha256sum -c - >/dev/null
+    else
+        printf '%s  %s\n' "${sum}" "${file}" | shasum -a 256 -c - >/dev/null
+    fi
+}
+
+build_openssl() {
+    local src_dir="${deps_dir}/openssl-${OPENSSL_VERSION}"
+    local tarball="${deps_dir}/openssl-${OPENSSL_VERSION}.tar.gz"
+
+    if up_to_date "${stamp}" "${OPENSSL_VERSION}"; then
+        log "OpenSSL ${OPENSSL_VERSION} already installed, skipping build"
+        return 0
+    fi
+
+    log "Building OpenSSL ${OPENSSL_VERSION} (static)..."
+    curl -fsSL --retry 3 \
+        "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+        -o "${tarball}"
+    check_sha256 "${OPENSSL_SHA256}" "${tarball}" || die "checksum mismatch for ${tarball}"
+
+    rm -rf "${src_dir}" "${openssl_prefix}"
+    tar -xzf "${tarball}" -C "${deps_dir}"
+    (
+        cd "${src_dir}"
+        # --libdir=lib, not x86_64's default lib64.
+        quiet openssl ./Configure no-shared no-tests no-apps no-docs \
+            --prefix="${openssl_prefix}" --libdir=lib \
+            --openssldir="${openssl_prefix}/ssl"
+        quiet openssl make -j"${jobs}" build_libs
+        quiet openssl make install_dev
+    )
+    rm -rf "${src_dir}" "${tarball}"
+    printf '  OpenSSL   %s (static)\n' "${OPENSSL_VERSION}" >"${openssl_prefix}/buildinfo"
+    printf '%s\n' "${OPENSSL_VERSION}" >"${stamp}"
+}
+
+install_openssl_windows() {
+    local version
+
+    if [ -r "${stamp}" ]; then
+        log "OpenSSL $(cat "${stamp}") already installed, skipping vcpkg"
+        return 0
+    fi
+
+    log "Installing OpenSSL from vcpkg (${vcpkg_triplet})..."
+    rm -rf "${deps_dir}/openssl"
+    vcpkg_install openssl "${deps_dir}/openssl" openssl
+    version=$(pc_version "${openssl_prefix}/lib/pkgconfig/openssl.pc")
+    printf '  OpenSSL   %s (vcpkg %s, static)\n' "${version}" "${vcpkg_triplet}" \
+        >"${openssl_prefix}/buildinfo"
+    printf '%s\n' "${version}" >"${stamp}"
+}
+
+if [ "${platform}" = windows ]; then
+    install_openssl_windows
+else
+    build_openssl
+fi

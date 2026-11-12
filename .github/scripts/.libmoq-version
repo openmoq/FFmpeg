@@ -1,0 +1,5 @@
+# libmoq (openmoq/moq5) revision the moq muxer is built against. Pinned to a
+# commit: moq5 has no release tags and main does not keep API stability.
+# MOQ5_REF may also be a branch, tag or refs/pull/<n>/merge.
+MOQ5_REPO=https://github.com/openmoq/moq5.git
+MOQ5_REF=406aa0af99b05bb4fd733713b85c71f14dda2604
