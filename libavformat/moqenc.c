@@ -227,6 +227,8 @@ typedef struct MOQContext {
     int packaging;
     int draft;
     int audio_fragment_frames;
+    int audio_priority;
+    int video_priority;
 
     moq_version_t version_buf[2];
 
@@ -615,6 +617,8 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
         tcfg.has_label = 1;
         tcfg.label = moq_bytes_cstr(label->value);
     }
+    tcfg.has_publisher_priority = 1;
+    tcfg.publisher_priority = is_audio ? ctx->audio_priority : ctx->video_priority;
 
     moq_result_t res = moq_media_sender_add_track(ctx->tx, &tcfg, &trk->media);
     if (res != MOQ_OK)
@@ -632,7 +636,7 @@ static int moq_add_track(AVFormatContext *s, MOQTrack *trk,
         av_log(s, AV_LOG_VERBOSE, ", renderGroup %d", tcfg.render_group);
     if (tcfg.label.len)
         av_log(s, AV_LOG_VERBOSE, ", label '%s'", label->value);
-    av_log(s, AV_LOG_VERBOSE, ")\n");
+    av_log(s, AV_LOG_VERBOSE, ", priority %d)\n", tcfg.publisher_priority);
 
     return 0;
 }
@@ -1201,6 +1205,8 @@ static const AVOption options[] = {
         { "cmaf", "CMAF chunks: one moof+mdat fragment per object", 0, AV_OPT_TYPE_CONST, { .i64 = MOQ_PKG_CMAF }, 0, 0, ENC, .unit = "packaging" },
     { "moq_audio_fragment_frames", "Audio frames per MoQ group, one frame per object; under CMAF the group is one CMAF fragment and each object one of its moof+mdat chunks", OFFSET(audio_fragment_frames), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, MOQ_AUDIO_FRAGMENT_FRAMES_MAX, ENC, .unit = "fragment_frames" },
         { "auto", "one second of audio per group", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, ENC, .unit = "fragment_frames" },
+    { "moq_audio_priority", "MoQT publisher priority of audio tracks, 0 is sent first", OFFSET(audio_priority), AV_OPT_TYPE_INT, { .i64 = 64 }, 0, 255, ENC },
+    { "moq_video_priority", "MoQT publisher priority of video tracks, 0 is sent first", OFFSET(video_priority), AV_OPT_TYPE_INT, { .i64 = 128 }, 0, 255, ENC },
     { NULL },
 };
 
