@@ -291,10 +291,6 @@ static int moq_hex_digit(int c)
     return -1;
 }
 
-/* Decodes one namespace field in place from MoQT's serialized name form
- * (draft-ietf-moq-transport-18 §1.5): a-z, A-Z, 0-9 and _ stand for
- * themselves, any other byte is '.' and two lowercase hex digits.
- * Returns the decoded length, or an error for a non-canonical field. */
 static int moq_decode_field(AVFormatContext *s, char *field)
 {
     const char *in = field;
