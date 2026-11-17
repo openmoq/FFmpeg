@@ -230,7 +230,7 @@ typedef struct MOQContext {
     int audio_priority;
     int video_priority;
 
-    moq_version_t version_buf[2];
+    moq_version_t version;
 
     char *ns_buf;
     moq_bytes_t ns_parts[MOQ_NS_PARTS_MAX];
@@ -955,17 +955,12 @@ static int moq_init(AVFormatContext *s)
         ecfg.ca_file = moq_bytes_cstr(ctx->ca_file);
 
     if (ctx->draft) {
-        ctx->version_buf[0]         = (moq_version_t)ctx->draft;
+        ctx->version                = (moq_version_t)ctx->draft;
         ecfg.versions.policy        = MOQ_VERSION_POLICY_EXACT;
         ecfg.versions.version_count = 1;
-    } else {
-        ctx->version_buf[0]         = MOQ_VERSION_DRAFT_18;
-        ctx->version_buf[1]         = MOQ_VERSION_DRAFT_16;
-        ecfg.versions.policy        = MOQ_VERSION_POLICY_LIST;
-        ecfg.versions.version_count = 2;
+        ecfg.versions.versions      = &ctx->version;
+        ecfg.versions.struct_size   = sizeof(ecfg.versions);
     }
-    ecfg.versions.versions = ctx->version_buf;
-    ecfg.versions.struct_size = sizeof(ecfg.versions);
 
     moq_result_t res = moq_endpoint_connect(&ecfg, &ctx->ep);
     if (res != MOQ_OK)
@@ -1254,10 +1249,11 @@ static const AVOption options[] = {
     { "moq_audio_track", "Catalog name of the audio track, when there is one audio stream; several need -metadata:s:a:N moq_track=NAME", OFFSET(audio_track_name), AV_OPT_TYPE_STRING, { .str = "audio" }, 0, 0, ENC },
     { "moq_ca_file", "CA bundle used to verify the relay certificate", OFFSET(ca_file), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, ENC },
     { "moq_insecure", "Skip relay certificate verification (testing only)", OFFSET(insecure), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, ENC },
-    { "moq_draft", "MoQT draft to negotiate", OFFSET(draft), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 18, ENC, .unit = "draft" },
+    { "moq_draft", "MoQT draft to negotiate", OFFSET(draft), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 22, ENC, .unit = "draft" },
         { "auto", "offer every supported draft, newest first, and let the relay choose", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, ENC, .unit = "draft" },
         { "16", "draft-16 only; a relay without it fails to connect", 0, AV_OPT_TYPE_CONST, { .i64 = 16 }, 0, 0, ENC, .unit = "draft" },
         { "18", "draft-18 only; a relay without it fails to connect", 0, AV_OPT_TYPE_CONST, { .i64 = 18 }, 0, 0, ENC, .unit = "draft" },
+        { "22", "draft-22 only; a relay without it fails to connect", 0, AV_OPT_TYPE_CONST, { .i64 = 22 }, 0, 0, ENC, .unit = "draft" },
     { "moq_packaging", "How media is packaged inside MoQ objects", OFFSET(packaging), AV_OPT_TYPE_INT, { .i64 = MOQ_PKG_LOC }, MOQ_PKG_LOC, MOQ_PKG_CMAF, ENC, .unit = "packaging" },
         { "loc", "Low Overhead Container: the access unit, LOC properties derived from timing", 0, AV_OPT_TYPE_CONST, { .i64 = MOQ_PKG_LOC }, 0, 0, ENC, .unit = "packaging" },
         { "cmaf", "CMAF chunks: one moof+mdat fragment per object", 0, AV_OPT_TYPE_CONST, { .i64 = MOQ_PKG_CMAF }, 0, 0, ENC, .unit = "packaging" },
