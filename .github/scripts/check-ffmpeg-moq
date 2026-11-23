@@ -22,6 +22,14 @@ log 'Checking the moq muxer and x264...'
     -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -f null - \
     || die 'libx264 encode failed'
 
+if [ "${platform}" = macos ]; then
+    log 'Checking avfoundation and VideoToolbox...'
+    ./ffmpeg -hide_banner -devices 2>/dev/null | grep -Eq '^[[:space:]]*D[[:space:]]+avfoundation[[:space:]]' \
+        || die 'the avfoundation capture device is missing'
+    ./ffmpeg -hide_banner -encoders 2>/dev/null | grep -Eq '^[[:space:]]*V[.A-Z]*[[:space:]]+h264_videotoolbox[[:space:]]' \
+        || die 'the h264_videotoolbox encoder is missing'
+fi
+
 log 'Checking the runtime dependencies...'
 # Only what every machine has: the C library, zlib and the OS itself.
 binaries=(./ffmpeg)

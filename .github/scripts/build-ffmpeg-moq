@@ -36,6 +36,13 @@ if [ "${platform}" = windows ]; then
     pkg_config_path="${pkg_config_path}:${zlib_prefix}/lib/pkgconfig"
     configure_args+=(--toolchain=msvc)
 fi
+if [ "${platform}" = macos ]; then
+    configure_args+=(
+        --enable-avfoundation
+        --enable-videotoolbox
+        --enable-audiotoolbox
+    )
+fi
 
 log 'Configuring ffmpeg...'
 rm -rf "${build_dir}"
