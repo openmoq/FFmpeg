@@ -24,6 +24,7 @@ Built With
 * FFmpeg [{{FFMPEG_REV}}](https://github.com/openmoq/FFmpeg/commit/{{FFMPEG_REV}}) with `--enable-gpl --enable-libx264`, so the binaries are GPLv2 or later (see `COPYING.GPLv2` in each package)
 * libmoq [openmoq/moq5@{{MOQ5_SHORT}}](https://github.com/openmoq/moq5/commit/{{MOQ5_SHA}}), with picoquic {{PICOQUIC_SHORT}} and picotls {{PICOTLS_SHORT}}
 * x264 {{X264_SHORT}} and OpenSSL {{OPENSSL_VERSION}}, linked statically
+* On macOS, the `avfoundation` capture device (camera, microphone, screen) and the VideoToolbox and AudioToolbox encoders (`h264_videotoolbox`, `hevc_videotoolbox`, `aac_at`)
 * `BUILDINFO.txt` in each package lists the exact revisions and configure options
 
 ### Checksums
