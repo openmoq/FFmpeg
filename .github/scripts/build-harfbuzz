@@ -32,7 +32,9 @@ if [ "${platform}" = windows ]; then
     fi
     log "Installing HarfBuzz from vcpkg (${vcpkg_triplet})..."
     rm -rf "${deps_dir}/harfbuzz"
-    vcpkg_install harfbuzz "${deps_dir}/harfbuzz" 'harfbuzz[core,freetype]'
+    # Naming freetype[core] keeps vcpkg from adding FreeType's default PNG,
+    # bzip2, brotli and zlib support, which ffmpeg would then fail to link.
+    vcpkg_install harfbuzz "${deps_dir}/harfbuzz" 'freetype[core]' 'harfbuzz[core,freetype]'
     printf '  HarfBuzz  %s (vcpkg %s, static)\n' \
         "$(pc_version "${harfbuzz_prefix}/lib/pkgconfig/harfbuzz.pc")" "${vcpkg_triplet}" \
         >"${harfbuzz_prefix}/buildinfo"
