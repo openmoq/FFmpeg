@@ -44,7 +44,10 @@ jobs:
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git curl perl nasm \
-            xz-utils zlib1g-dev ca-certificates
+            xz-utils zlib1g-dev ca-certificates \
+            python3-pip gperf libexpat1-dev fontconfig-config fonts-dejavu-core
+          # Fontconfig needs a newer meson than Ubuntu 22.04's.
+          python3 -m pip install --quiet --no-cache-dir meson==1.12.1
 
       - uses: actions/checkout@v7
 
@@ -58,6 +61,9 @@ jobs:
           echo "openssl=$(.github/scripts/build-openssl --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "libmoq=$(.github/scripts/build-libmoq --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "freetype=$(.github/scripts/build-freetype --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "harfbuzz=$(.github/scripts/build-harfbuzz --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "fontconfig=$(.github/scripts/build-fontconfig --print-deps-key)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/cache@v6
         with:
@@ -90,6 +96,36 @@ jobs:
         run: |
           : Build x264 🎞️
           .github/scripts/build-x264
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/freetype
+          key: ffmpeg-moq-freetype-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-freetype', '.github/scripts/common.sh') }}
+
+      - name: Build FreeType 🔤
+        run: |
+          : Build FreeType 🔤
+          .github/scripts/build-freetype
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/harfbuzz
+          key: ffmpeg-moq-harfbuzz-${{ steps.deps.outputs.harfbuzz }}-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-harfbuzz', '.github/scripts/common.sh') }}
+
+      - name: Build HarfBuzz 🔡
+        run: |
+          : Build HarfBuzz 🔡
+          .github/scripts/build-harfbuzz
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/fontconfig
+          key: ffmpeg-moq-fontconfig-${{ steps.deps.outputs.fontconfig }}-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-fontconfig', '.github/scripts/common.sh') }}
+
+      - name: Build Fontconfig 🗂️
+        run: |
+          : Build Fontconfig 🗂️
+          .github/scripts/build-fontconfig
 
       - name: Build ffmpeg 🧱
         run: |
@@ -137,11 +173,11 @@ jobs:
         include:
           - arch: arm64
             runner: macos-15
-            brew: ninja pkgconf xz
+            brew: ninja meson pkgconf xz
           # x264 and FFmpeg need nasm for their x86 assembly.
           - arch: x86_64
             runner: macos-15-intel
-            brew: ninja pkgconf xz nasm
+            brew: ninja meson pkgconf xz nasm
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -163,6 +199,8 @@ jobs:
           echo "openssl=$(.github/scripts/build-openssl --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "libmoq=$(.github/scripts/build-libmoq --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "freetype=$(.github/scripts/build-freetype --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "harfbuzz=$(.github/scripts/build-harfbuzz --print-deps-key)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/cache@v6
         with:
@@ -195,6 +233,26 @@ jobs:
         run: |
           : Build x264 🎞️
           .github/scripts/build-x264
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/freetype
+          key: ffmpeg-moq-freetype-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-freetype', '.github/scripts/common.sh') }}
+
+      - name: Build FreeType 🔤
+        run: |
+          : Build FreeType 🔤
+          .github/scripts/build-freetype
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/harfbuzz
+          key: ffmpeg-moq-harfbuzz-${{ steps.deps.outputs.harfbuzz }}-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-harfbuzz', '.github/scripts/common.sh') }}
+
+      - name: Build HarfBuzz 🔡
+        run: |
+          : Build HarfBuzz 🔡
+          .github/scripts/build-harfbuzz
 
       - name: Build ffmpeg 🧱
         run: |
@@ -277,6 +335,8 @@ jobs:
           echo "libmoq=$(.github/scripts/build-libmoq --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "zlib=$(.github/scripts/build-zlib --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "freetype=$(.github/scripts/build-freetype --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "harfbuzz=$(.github/scripts/build-harfbuzz --print-deps-key)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/cache@v6
         with:
@@ -323,6 +383,28 @@ jobs:
         run: |
           : Build zlib 🗜️
           .github/scripts/build-zlib
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/freetype
+          key: ffmpeg-moq-freetype-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-freetype', '.github/scripts/common.sh') }}
+
+      - name: Build FreeType 🔤
+        shell: bash
+        run: |
+          : Build FreeType 🔤
+          .github/scripts/build-freetype
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/harfbuzz
+          key: ffmpeg-moq-harfbuzz-${{ steps.deps.outputs.harfbuzz }}-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-harfbuzz', '.github/scripts/common.sh') }}
+
+      - name: Build HarfBuzz 🔡
+        shell: bash
+        run: |
+          : Build HarfBuzz 🔡
+          .github/scripts/build-harfbuzz
 
       - name: Build ffmpeg 🧱
         shell: msys2 {0}

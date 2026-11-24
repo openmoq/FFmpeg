@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# build-harfbuzz - builds HarfBuzz as a static library on top of
+# build-freetype's FreeType, for the drawtext filter; build-ffmpeg-moq finds
+# it with pkg-config. On Windows it installs it from vcpkg instead.
+#
+#   build-harfbuzz                    build into <work dir>/deps/harfbuzz
+#   build-harfbuzz --print-deps-key   cache key of what it builds
+#
+# Needs meson and ninja. Environment: VCPKG_INSTALLATION_ROOT on Windows;
+# HARFBUZZ_REPO and HARFBUZZ_REF, MOQ_WORK_DIR (optional).
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+HARFBUZZ_REPO="${HARFBUZZ_REPO:-https://github.com/harfbuzz/harfbuzz.git}"
+# 15.1.0
+HARFBUZZ_REF="${HARFBUZZ_REF:-3df40d9b98d6b32f0e4288d4ecfbb158ddb3a372}"
+
+if [ "${platform}" = windows ]; then
+    case ${1:-} in
+    '') ;;
+    --print-deps-key)
+        printf '%s-harfbuzz-vcpkg\n' "${platform_id}"
+        exit 0
+        ;;
+    *) die "unknown argument: $1" ;;
+    esac
+    if [ -r "${harfbuzz_prefix}/buildinfo" ]; then
+        log 'HarfBuzz already installed, skipping vcpkg'
+        exit 0
+    fi
+    log "Installing HarfBuzz from vcpkg (${vcpkg_triplet})..."
+    rm -rf "${deps_dir}/harfbuzz"
+    vcpkg_install harfbuzz "${deps_dir}/harfbuzz" 'harfbuzz[core,freetype]'
+    printf '  HarfBuzz  %s (vcpkg %s, static)\n' \
+        "$(pc_version "${harfbuzz_prefix}/lib/pkgconfig/harfbuzz.pc")" "${vcpkg_triplet}" \
+        >"${harfbuzz_prefix}/buildinfo"
+    exit 0
+fi
+
+harfbuzz_revision=$(resolve_revision "${HARFBUZZ_REPO}" "${HARFBUZZ_REF}")
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    printf '%s-harfbuzz_%s\n' "${platform_id}" "${harfbuzz_revision:0:10}"
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+require_dep FreeType "${freetype_prefix}" build-freetype
+
+# Rebuilt when HarfBuzz or the FreeType it links changes.
+stamp="${harfbuzz_prefix}/.revision"
+stamp_value="${harfbuzz_revision} freetype-$(cat "${freetype_prefix}/.revision")"
+src_dir="${deps_dir}/harfbuzz-src"
+
+if up_to_date "${stamp}" "${stamp_value}"; then
+    log "HarfBuzz ${harfbuzz_revision:0:10} already installed, skipping build"
+    exit 0
+fi
+
+log "Building HarfBuzz ${harfbuzz_revision:0:10} (static)..."
+rm -rf "${harfbuzz_prefix}"
+mkdir -p "${deps_dir}"
+fetch_source "${HARFBUZZ_REPO}" "${harfbuzz_revision}" "${src_dir}"
+# Only shaping with FreeType fonts, which is what drawtext uses, and no C++
+# runtime.
+PKG_CONFIG_PATH="${freetype_prefix}/lib/pkgconfig" \
+    quiet harfbuzz meson setup "${src_dir}/build" "${src_dir}" \
+    --prefix="${harfbuzz_prefix}" --libdir=lib \
+    --buildtype=release --default-library=static -Db_staticpic=true \
+    -Dfreetype=enabled -Dglib=disabled -Dgobject=disabled -Dcairo=disabled \
+    -Dchafa=disabled -Dicu=disabled -Dpng=disabled -Dzlib=disabled \
+    -Dsubset=disabled -Draster=disabled -Dvector=disabled -Dgpu=disabled \
+    -Dgpu_demo=disabled -Dtests=disabled -Ddocs=disabled -Dutilities=disabled \
+    -Dintrospection=disabled -Dbenchmark=disabled -Dwith_libstdcxx=false
+quiet harfbuzz meson compile -C "${src_dir}/build" -j "${jobs}"
+quiet harfbuzz meson install -C "${src_dir}/build"
+rm -rf "${src_dir}"
+printf '  HarfBuzz  %s @ %s\n' "${HARFBUZZ_REPO}" "${harfbuzz_revision}" >"${harfbuzz_prefix}/buildinfo"
+printf '%s\n' "${stamp_value}" >"${stamp}"

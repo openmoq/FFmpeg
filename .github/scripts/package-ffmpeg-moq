@@ -15,8 +15,85 @@ source "$(dirname "$0")/common.sh"
 [ -x "${build_dir}/ffmpeg${exe}" ] || die "no ffmpeg in ${build_dir}: run build-ffmpeg-moq first"
 cd "${build_dir}"
 
-deps=("${x264_prefix}" "${libmoq_prefix}" "${openssl_prefix}")
+deps=("${x264_prefix}" "${libmoq_prefix}" "${openssl_prefix}" "${freetype_prefix}" "${harfbuzz_prefix}")
+[ "${platform}" != linux ] || deps+=("${fontconfig_prefix}")
 [ "${platform}" != windows ] || deps+=("${zlib_prefix}")
+
+# Commands to start from, for BUILDINFO.txt.
+examples() {
+    local relay='moqt://relay.example.com:4433/moq-relay'
+    local video='-c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -g 60'
+    local rate='-b:v 2M -maxrate 2M -bufsize 4M'
+    local clock="text='%{localtime\:%X.%3N}':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black"
+    printf 'Examples. Use your relay'"'"'s URL; for one with a self-signed certificate\n'
+    printf 'add -moq_insecure 1 (local tests only).\n\n'
+    case ${platform} in
+    windows)
+        cat <<EOF
+Publish a test pattern with a tone (Command Prompt; in PowerShell end the
+lines with \` instead of ^):
+  ffmpeg.exe -re -f lavfi -i testsrc2=size=1280x720:rate=30 ^
+    -f lavfi -i sine=frequency=440 ^
+    ${video} ^
+    ${rate} -c:a aac -b:a 128k ^
+    -f moq -moq_namespace demo-live ${relay}
+
+List the cameras and microphones:
+  ffmpeg.exe -hide_banner -list_devices true -f dshow -i dummy
+
+Publish a camera and a microphone by those names, with the local time on
+the video:
+  ffmpeg.exe -f dshow -rtbufsize 100M -framerate 30 -video_size 1280x720 ^
+    -i video="Integrated Camera":audio="Microphone" ^
+    -vf "drawtext=fontfile='C\:/Windows/Fonts/arial.ttf':${clock}" ^
+    ${video} ^
+    ${rate} -c:a aac -b:a 128k ^
+    -f moq -moq_namespace demo-camera ${relay}
+EOF
+        ;;
+    macos)
+        cat <<EOF
+Publish a test pattern with a tone:
+  ./ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \\
+    -f lavfi -i sine=frequency=440 \\
+    ${video} \\
+    ${rate} -c:a aac -b:a 128k \\
+    -f moq -moq_namespace demo-live ${relay}
+
+List the cameras and microphones:
+  ./ffmpeg -hide_banner -f avfoundation -list_devices true -i ""
+
+Publish camera 0 and microphone 0, with the local time on the video. macOS
+asks once for the terminal to use them:
+  ./ffmpeg -f avfoundation -framerate 30 -video_size 1280x720 -i "0:0" \\
+    -vf "drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:${clock}" \\
+    ${video} \\
+    ${rate} -c:a aac -b:a 128k \\
+    -f moq -moq_namespace demo-camera ${relay}
+EOF
+        ;;
+    *)
+        cat <<EOF
+Publish a test pattern with a tone:
+  ./ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \\
+    -f lavfi -i sine=frequency=440 \\
+    ${video} \\
+    ${rate} -c:a aac -b:a 128k \\
+    -f moq -moq_namespace demo-live ${relay}
+
+Publish a camera (ls /dev/video* lists them), with the local time on the
+video:
+  ./ffmpeg -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 \\
+    -vf "drawtext=${clock}" \\
+    ${video} \\
+    ${rate} \\
+    -f moq -moq_namespace demo-camera ${relay}
+EOF
+        ;;
+    esac
+    printf '\nWithout -vf the video goes out as it is. The catalog needs a bitrate\n'
+    printf 'for every track, so keep -maxrate (or -b) on the encoder.\n\n'
+}
 
 ffmpeg_revision=$(git -C "${project_root}" rev-parse --short=10 HEAD)
 git -C "${project_root}" diff --quiet HEAD || ffmpeg_revision="${ffmpeg_revision}-dirty"
@@ -60,6 +137,7 @@ cp "ffmpeg${exe}" "ffprobe${exe}" "${project_root}/COPYING.GPLv2" "${stage}/"
     else
         printf '\nCheck it runs:  ./ffmpeg -hide_banner -h muxer=moq\n\n'
     fi
+    examples
     if [ "${platform}" = macos ]; then
         printf 'The binaries are not signed. If macOS blocks them after a browser\n'
         printf 'download, run:  xattr -d com.apple.quarantine ffmpeg ffprobe\n\n'

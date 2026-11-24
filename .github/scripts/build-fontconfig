@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+#
+# build-fontconfig - builds Fontconfig as a static library on Linux, so
+# drawtext finds a font without fontfile=; build-ffmpeg-moq finds it with
+# pkg-config. macOS and Windows have no /etc/fonts for it to read, so there
+# it does nothing and drawtext needs fontfile=.
+#
+#   build-fontconfig                    build into <work dir>/deps/fontconfig
+#   build-fontconfig --print-deps-key   cache key of what it builds
+#
+# Needs meson, ninja, gperf and a static libexpat. Environment (optional):
+# FONTCONFIG_REPO and FONTCONFIG_REF, MOQ_WORK_DIR.
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+FONTCONFIG_REPO="${FONTCONFIG_REPO:-https://gitlab.freedesktop.org/fontconfig/fontconfig.git}"
+# 2.18.3
+FONTCONFIG_REF="${FONTCONFIG_REF:-0f236723a3c26bd9745e32ba2b3ee21e5f809295}"
+
+if [ "${platform}" != linux ]; then
+    [ "${1:-}" != --print-deps-key ] || { printf '%s-no-fontconfig\n' "${platform_id}"; exit 0; }
+    log "${platform} has no fontconfig, nothing to build"
+    exit 0
+fi
+
+fontconfig_revision=$(resolve_revision "${FONTCONFIG_REPO}" "${FONTCONFIG_REF}")
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    printf '%s-fontconfig_%s\n' "${platform_id}" "${fontconfig_revision:0:10}"
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+require_dep FreeType "${freetype_prefix}" build-freetype
+
+# Rebuilt when Fontconfig or the FreeType it links changes.
+stamp="${fontconfig_prefix}/.revision"
+stamp_value="${fontconfig_revision} freetype-$(cat "${freetype_prefix}/.revision")"
+src_dir="${deps_dir}/fontconfig-src"
+
+if up_to_date "${stamp}" "${stamp_value}"; then
+    log "Fontconfig ${fontconfig_revision:0:10} already installed, skipping build"
+    exit 0
+fi
+
+expat_libdir=$(pkg-config --variable=libdir expat) || die 'expat not found: install libexpat1-dev'
+[ -r "${expat_libdir}/libexpat.a" ] || die "no static libexpat in ${expat_libdir}"
+
+log "Building Fontconfig ${fontconfig_revision:0:10} (static)..."
+rm -rf "${fontconfig_prefix}"
+mkdir -p "${deps_dir}"
+fetch_source "${FONTCONFIG_REPO}" "${fontconfig_revision}" "${src_dir}"
+# The machine's own configuration, fonts and cache, wherever ffmpeg runs.
+PKG_CONFIG_PATH="${freetype_prefix}/lib/pkgconfig" \
+    quiet fontconfig meson setup "${src_dir}/build" "${src_dir}" \
+    --prefix="${fontconfig_prefix}" --libdir=lib \
+    --buildtype=release --default-library=static -Db_staticpic=true \
+    -Dxml-backend=expat -Ddoc=disabled -Dnls=disabled -Dtests=disabled \
+    -Dtools=disabled -Dcache-build=disabled \
+    -Dbaseconfig-dir=/etc/fonts -Dconfig-dir=/etc/fonts/conf.d \
+    -Dtemplate-dir=/usr/share/fontconfig/conf.avail \
+    -Dxml-dir=/usr/share/xml/fontconfig -Dcache-dir=/var/cache/fontconfig
+quiet fontconfig meson compile -C "${src_dir}/build" -j "${jobs}"
+# Only the library, headers and .pc: the configuration is the machine's.
+quiet fontconfig meson install -C "${src_dir}/build" --tags devel
+rm -rf "${src_dir}"
+
+# -lexpat would pick the shared libexpat: ask GNU ld for the static one.
+pc="${fontconfig_prefix}/lib/pkgconfig/fontconfig.pc"
+expat_libs="-L${expat_libdir} -l:libexpat.a"
+sed -i -E -e '/^Requires(\.private)?:/{s/(,[[:space:]]*)?expat[^,]*//; s/:[[:space:]]*,/:/;}' \
+    -e "/^Libs.private:/s|\$| ${expat_libs}|" "${pc}"
+grep -q '^Libs.private:' "${pc}" || printf 'Libs.private: %s\n' "${expat_libs}" >>"${pc}"
+
+printf '  Fontconfig %s @ %s\n' "${FONTCONFIG_REPO}" "${fontconfig_revision}" >"${fontconfig_prefix}/buildinfo"
+printf '%s\n' "${stamp_value}" >"${stamp}"

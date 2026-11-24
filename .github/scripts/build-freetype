@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# build-freetype - builds FreeType as a static library, for the drawtext
+# filter; build-ffmpeg-moq finds it with pkg-config. On Windows it installs
+# it from vcpkg instead.
+#
+#   build-freetype                    build into <work dir>/deps/freetype
+#   build-freetype --print-deps-key   cache key of what it builds
+#
+# Environment: VCPKG_INSTALLATION_ROOT on Windows; FREETYPE_REPO and
+# FREETYPE_REF, MOQ_WORK_DIR (optional).
+
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+
+FREETYPE_REPO="${FREETYPE_REPO:-https://gitlab.freedesktop.org/freetype/freetype.git}"
+# VER-2-14-3
+FREETYPE_REF="${FREETYPE_REF:-0a0221a1347e2f1e07c395263540026e9a0aa7c7}"
+
+if [ "${platform}" = windows ]; then
+    case ${1:-} in
+    '') ;;
+    --print-deps-key)
+        printf '%s-freetype-vcpkg\n' "${platform_id}"
+        exit 0
+        ;;
+    *) die "unknown argument: $1" ;;
+    esac
+    if [ -r "${freetype_prefix}/buildinfo" ]; then
+        log 'FreeType already installed, skipping vcpkg'
+        exit 0
+    fi
+    log "Installing FreeType from vcpkg (${vcpkg_triplet})..."
+    rm -rf "${deps_dir}/freetype"
+    # Without the optional PNG, bzip2, brotli and zlib support.
+    vcpkg_install freetype "${deps_dir}/freetype" 'freetype[core]'
+    printf '  FreeType  %s (vcpkg %s, static)\n' \
+        "$(vcpkg_version "${deps_dir}/freetype" freetype)" "${vcpkg_triplet}" \
+        >"${freetype_prefix}/buildinfo"
+    exit 0
+fi
+
+freetype_revision=$(resolve_revision "${FREETYPE_REPO}" "${FREETYPE_REF}")
+
+case ${1:-} in
+'') ;;
+--print-deps-key)
+    printf '%s-freetype_%s\n' "${platform_id}" "${freetype_revision:0:10}"
+    exit 0
+    ;;
+*) die "unknown argument: $1" ;;
+esac
+
+stamp="${freetype_prefix}/.revision"
+src_dir="${deps_dir}/freetype-src"
+
+if up_to_date "${stamp}" "${freetype_revision}"; then
+    log "FreeType ${freetype_revision:0:10} already installed, skipping build"
+    exit 0
+fi
+
+log "Building FreeType ${freetype_revision:0:10} (static)..."
+rm -rf "${freetype_prefix}"
+mkdir -p "${deps_dir}"
+fetch_source "${FREETYPE_REPO}" "${freetype_revision}" "${src_dir}"
+# drawtext only renders plain outline fonts: no PNG, bzip2, brotli or zlib,
+# and HarfBuzz comes in on its own.
+quiet freetype cmake -S "${src_dir}" -B "${src_dir}/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${freetype_prefix}" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DFT_DISABLE_ZLIB=ON \
+    -DFT_DISABLE_BZIP2=ON \
+    -DFT_DISABLE_PNG=ON \
+    -DFT_DISABLE_HARFBUZZ=ON \
+    -DFT_DISABLE_BROTLI=ON
+quiet freetype cmake --build "${src_dir}/build" -j "${jobs}"
+quiet freetype cmake --install "${src_dir}/build"
+rm -rf "${src_dir}"
+printf '  FreeType  %s @ %s\n' "${FREETYPE_REPO}" "${freetype_revision}" >"${freetype_prefix}/buildinfo"
+printf '%s\n' "${freetype_revision}" >"${stamp}"

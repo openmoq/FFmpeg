@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # check-ffmpeg-moq - checks the ffmpeg that build-ffmpeg-moq built: the moq
-# muxer is there, x264 encodes, and the binaries need nothing beyond what
-# every machine has. On Windows it also publishes to a closed port.
+# muxer is there, x264 encodes, drawtext draws, and the binaries need
+# nothing beyond what every machine has. On Windows it also publishes to a
+# closed port.
 #
 #   check-ffmpeg-moq
 #
@@ -21,6 +22,21 @@ log 'Checking the moq muxer and x264...'
 ./ffmpeg -hide_banner -loglevel error \
     -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -f null - \
     || die 'libx264 encode failed'
+
+log 'Checking drawtext...'
+# Linux finds a font through Fontconfig; macOS and Windows need fontfile=.
+case ${platform} in
+macos) font="fontfile=/System/Library/Fonts/Helvetica.ttc:" ;;
+windows) font="fontfile='C\\:/Windows/Fonts/arial.ttf':" ;;
+*) font='' ;;
+esac
+# The local time with milliseconds, as in the BUILDINFO.txt example. MSYS2
+# would rewrite the C: path.
+MSYS2_ARG_CONV_EXCL='*' ./ffmpeg -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 \
+    -vf "drawtext=${font}text='%{localtime\:%X.%3N}':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black" \
+    -c:v libx264 -f null - \
+    || die 'drawtext failed'
 
 if [ "${platform}" = macos ]; then
     log 'Checking avfoundation and VideoToolbox...'

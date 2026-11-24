@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # build-ffmpeg-moq - configures and builds ffmpeg with the moq muxer in
-# <work dir>/ffmpeg, linking libmoq, x264 and (on Windows) zlib statically
-# through pkg-config, from what the build-* scripts installed.
+# <work dir>/ffmpeg, linking libmoq, x264, FreeType, HarfBuzz, Fontconfig
+# (Linux) and zlib (Windows) statically through pkg-config, from what the
+# build-* scripts installed.
 #
 #   build-ffmpeg-moq
 #
@@ -18,7 +19,11 @@ source "$(dirname "$0")/common.sh"
 
 require_dep libmoq "${libmoq_prefix}" build-libmoq
 require_dep x264 "${x264_prefix}" build-x264
+require_dep FreeType "${freetype_prefix}" build-freetype
+require_dep HarfBuzz "${harfbuzz_prefix}" build-harfbuzz
 pkg_config_path="${libmoq_prefix}/lib/pkgconfig:${x264_prefix}/lib/pkgconfig"
+# FreeType ahead of the copy vcpkg puts next to HarfBuzz on Windows.
+pkg_config_path="${pkg_config_path}:${freetype_prefix}/lib/pkgconfig:${harfbuzz_prefix}/lib/pkgconfig"
 configure_args=(
     # Link nothing the build host happens to have.
     --disable-autodetect
@@ -27,6 +32,8 @@ configure_args=(
     --enable-libx264
     --enable-libmoq
     --enable-zlib
+    --enable-libfreetype
+    --enable-libharfbuzz
     --disable-doc
     --disable-ffplay
 )
@@ -35,6 +42,11 @@ if [ "${platform}" = windows ]; then
     require_msvc
     pkg_config_path="${pkg_config_path}:${zlib_prefix}/lib/pkgconfig"
     configure_args+=(--toolchain=msvc)
+fi
+if [ "${platform}" = linux ]; then
+    require_dep Fontconfig "${fontconfig_prefix}" build-fontconfig
+    pkg_config_path="${pkg_config_path}:${fontconfig_prefix}/lib/pkgconfig"
+    configure_args+=(--enable-libfontconfig)
 fi
 if [ "${platform}" = macos ]; then
     configure_args+=(

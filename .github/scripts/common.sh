@@ -2,6 +2,7 @@
 #
 # The steps, each its own script, in order:
 #   build-openssl  build-libmoq  build-x264  build-zlib (Windows)
+#   build-freetype  build-harfbuzz  build-fontconfig (Linux)
 #   build-ffmpeg-moq  check-ffmpeg-moq  package-ffmpeg-moq
 #
 # MOQ_WORK_DIR (default: <repo>/.moq-build) holds deps/ (one cacheable
@@ -58,11 +59,18 @@ libmoq_prefix="${deps_dir}/libmoq"
 picoquic_deps="${deps_dir}/picoquic"
 picotls_build="${picoquic_deps}/picotls/build"
 x264_prefix="${deps_dir}/x264"
+freetype_prefix="${deps_dir}/freetype"
+harfbuzz_prefix="${deps_dir}/harfbuzz"
+fontconfig_prefix="${deps_dir}/fontconfig"
 # Windows has no system zlib and gets OpenSSL and zlib from vcpkg, static
 # like everything else; vcpkg installs into <root>/<triplet>.
 vcpkg_triplet=x64-windows-static
 zlib_prefix="${deps_dir}/zlib/${vcpkg_triplet}"
-[ "${platform}" != windows ] || openssl_prefix="${deps_dir}/openssl/${vcpkg_triplet}"
+if [ "${platform}" = windows ]; then
+    openssl_prefix="${deps_dir}/openssl/${vcpkg_triplet}"
+    freetype_prefix="${deps_dir}/freetype/${vcpkg_triplet}"
+    harfbuzz_prefix="${deps_dir}/harfbuzz/${vcpkg_triplet}"
+fi
 
 jobs="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
 
@@ -75,6 +83,14 @@ quiet() {
         tail -n 60 "${log_dir}/${name}.log" >&2
         die "${name} failed, full log in ${log_dir}/${name}.log"
     fi
+}
+
+# fetch_source <repo> <commit> <dir>: just that commit, without history.
+fetch_source() {
+    rm -rf "$3"
+    git init --quiet "$3"
+    git -C "$3" fetch --quiet --depth 1 "$1" "$2"
+    git -C "$3" checkout --quiet --detach FETCH_HEAD
 }
 
 up_to_date() {
@@ -107,6 +123,15 @@ vcpkg_install() {
     [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] || die 'VCPKG_INSTALLATION_ROOT is not set'
     quiet "${name}" "$(cygpath -u "${VCPKG_INSTALLATION_ROOT}")/vcpkg.exe" install \
         "${@/%/:${vcpkg_triplet}}" "--x-install-root=$(native "${root}")"
+}
+
+# The version vcpkg installed of a port, from <install root>/vcpkg/info.
+vcpkg_version() {
+    local list
+    list=$(ls "$1/vcpkg/info" | grep -m1 "^$2_.*_${vcpkg_triplet}\.list$") \
+        || die "$2 is not installed in $1"
+    list=${list#"$2_"}
+    printf '%s\n' "${list%"_${vcpkg_triplet}.list"}"
 }
 
 # The Version: of a .pc file.
