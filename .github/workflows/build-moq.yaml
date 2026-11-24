@@ -75,11 +75,13 @@ jobs:
           : Build OpenSSL 🔐
           .github/scripts/build-openssl
 
+      # Relative: in the container ${{ github.workspace }} is the host's path,
+      # and only the first line of a list gets mapped to the container's.
       - uses: actions/cache@v6
         with:
           path: |
-            ${{ github.workspace }}/.moq-build/deps/libmoq
-            ${{ github.workspace }}/.moq-build/deps/picoquic
+            .moq-build/deps/libmoq
+            .moq-build/deps/picoquic
           key: ffmpeg-moq-libmoq-${{ steps.deps.outputs.libmoq }}-${{ steps.deps.outputs.openssl }}-${{ hashFiles('.github/scripts/build-libmoq', '.github/scripts/common.sh') }}
 
       - name: Build libmoq 🧩
