@@ -175,11 +175,11 @@ jobs:
         include:
           - arch: arm64
             runner: macos-15
-            brew: ninja meson pkgconf xz
+            brew: ninja meson pkgconf xz gperf
           # x264 and FFmpeg need nasm for their x86 assembly.
           - arch: x86_64
             runner: macos-15-intel
-            brew: ninja meson pkgconf xz nasm
+            brew: ninja meson pkgconf xz gperf nasm
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -203,6 +203,7 @@ jobs:
           echo "x264=$(.github/scripts/build-x264 --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "freetype=$(.github/scripts/build-freetype --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "harfbuzz=$(.github/scripts/build-harfbuzz --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "fontconfig=$(.github/scripts/build-fontconfig --print-deps-key)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/cache@v6
         with:
@@ -255,6 +256,16 @@ jobs:
         run: |
           : Build HarfBuzz 🔡
           .github/scripts/build-harfbuzz
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/fontconfig
+          key: ffmpeg-moq-fontconfig-${{ steps.deps.outputs.fontconfig }}-${{ steps.deps.outputs.freetype }}-${{ hashFiles('.github/scripts/build-fontconfig', '.github/scripts/fontconfig-macos.patch', '.github/scripts/common.sh') }}
+
+      - name: Build Fontconfig 🗂️
+        run: |
+          : Build Fontconfig 🗂️
+          .github/scripts/build-fontconfig
 
       - name: Build ffmpeg 🧱
         run: |
@@ -339,6 +350,7 @@ jobs:
           echo "zlib=$(.github/scripts/build-zlib --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "freetype=$(.github/scripts/build-freetype --print-deps-key)" >> "${GITHUB_OUTPUT}"
           echo "harfbuzz=$(.github/scripts/build-harfbuzz --print-deps-key)" >> "${GITHUB_OUTPUT}"
+          echo "fontconfig=$(.github/scripts/build-fontconfig --print-deps-key)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/cache@v6
         with:
@@ -408,6 +420,17 @@ jobs:
           : Build HarfBuzz 🔡
           .github/scripts/build-harfbuzz
 
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.moq-build/deps/fontconfig
+          key: ffmpeg-moq-fontconfig-${{ steps.deps.outputs.fontconfig }}-${{ hashFiles('.github/scripts/build-fontconfig', '.github/scripts/common.sh') }}
+
+      - name: Build Fontconfig 🗂️
+        shell: bash
+        run: |
+          : Build Fontconfig 🗂️
+          .github/scripts/build-fontconfig
+
       - name: Build ffmpeg 🧱
         shell: msys2 {0}
         run: |
@@ -445,6 +468,10 @@ jobs:
 
           & $ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -f null -
           if ($LASTEXITCODE -ne 0) { throw "libx264 encode failed (exit $LASTEXITCODE)" }
+
+          # The font through the fonts\fonts.conf in the zip, without a word from Fontconfig.
+          $drawtext = & $ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -vf "drawtext=text='%{localtime\:%X.%3N}':fontsize=24:fontcolor=white" -c:v libx264 -f null - 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $drawtext.Trim()) { throw "drawtext failed (exit $LASTEXITCODE): $drawtext" }
 
           $publish = & $ffmpeg -hide_banner -nostdin -loglevel error -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 -c:v libx264 -b:v 1M -maxrate 1M -bufsize 2M -f moq -moq_namespace test moqt://127.0.0.1:4443/test 2>&1 | Out-String
           Write-Host $publish

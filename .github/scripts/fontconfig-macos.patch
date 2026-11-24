@@ -1,0 +1,30 @@
+diff --git a/src/fcinit.c b/src/fcinit.c
+index 9c66515..c6ac8a0 100644
+--- a/src/fcinit.c
++++ b/src/fcinit.c
+@@ -51,6 +51,12 @@ FcInitFallbackConfig (const FcChar8 *sysroot)
+ 	"</include>"
+ 	"  <include ignore_missing=\"yes\" prefix=\"xdg\">fontconfig/conf.d</include>"
+ 	"  <include ignore_missing=\"yes\" prefix=\"xdg\">fontconfig/fonts.conf</include>"
++	/* openmoq: macOS has no fonts.conf, so the generic names go to its fonts here. */
++	"  <alias binding=\"same\"><family>sans</family><prefer><family>Helvetica</family></prefer></alias>"
++	"  <alias binding=\"same\"><family>sans-serif</family><prefer><family>Helvetica</family></prefer></alias>"
++	"  <alias binding=\"same\"><family>serif</family><prefer><family>Times</family></prefer></alias>"
++	"  <alias binding=\"same\"><family>mono</family><prefer><family>Menlo</family></prefer></alias>"
++	"  <alias binding=\"same\"><family>monospace</family><prefer><family>Menlo</family></prefer></alias>"
+ 	"</fontconfig>";
+ 
+     config = FcConfigCreate();
+@@ -108,7 +114,11 @@ FcInitLoadOwnConfig (FcConfig *config)
+ 
+     FcInitDebug();
+ 
+-    if (!FcConfigParseAndLoad (config, 0, FcTrue)) {
++    /* openmoq: with no fonts.conf, use the fallback without an error. */
++    FcChar8 *config_file = FcConfigGetFilename (config, 0);
++    FcBool   have_config_file = config_file != NULL;
++    FcStrFree (config_file);
++    if (!have_config_file || !FcConfigParseAndLoad (config, 0, FcTrue)) {
+ 	const FcChar8 *sysroot = FcConfigGetSysRoot (config);
+ 	FcConfig      *fallback = FcInitFallbackConfigWithFilter (config, sysroot);
+ 

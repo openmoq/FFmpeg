@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # package-ffmpeg-moq - packages the ffmpeg that build-ffmpeg-moq built into
-# <work dir>/out: ffmpeg and ffprobe with BUILDINFO.txt and the license, and
-# the debug symbols apart in out/debug.
+# <work dir>/out: ffmpeg and ffprobe with BUILDINFO.txt, the license and (on
+# Windows) fonts\fonts.conf, and the debug symbols apart in out/debug.
 #
 #   package-ffmpeg-moq
 #
@@ -15,8 +15,8 @@ source "$(dirname "$0")/common.sh"
 [ -x "${build_dir}/ffmpeg${exe}" ] || die "no ffmpeg in ${build_dir}: run build-ffmpeg-moq first"
 cd "${build_dir}"
 
-deps=("${x264_prefix}" "${libmoq_prefix}" "${openssl_prefix}" "${freetype_prefix}" "${harfbuzz_prefix}")
-[ "${platform}" != linux ] || deps+=("${fontconfig_prefix}")
+deps=("${x264_prefix}" "${libmoq_prefix}" "${openssl_prefix}" "${freetype_prefix}" "${harfbuzz_prefix}"
+    "${fontconfig_prefix}")
 [ "${platform}" != windows ] || deps+=("${zlib_prefix}")
 
 # Commands to start from, for BUILDINFO.txt.
@@ -45,7 +45,7 @@ Publish a camera and a microphone by those names, with the local time on
 the video:
   ffmpeg.exe -f dshow -rtbufsize 100M -framerate 30 -video_size 1280x720 ^
     -i video="Integrated Camera":audio="Microphone" ^
-    -vf "drawtext=fontfile='C\:/Windows/Fonts/arial.ttf':${clock}" ^
+    -vf "drawtext=${clock}" ^
     ${video} ^
     ${rate} -c:a aac -b:a 128k ^
     -f moq -moq_namespace demo-camera ${relay}
@@ -66,7 +66,7 @@ List the cameras and microphones:
 Publish camera 0 and microphone 0, with the local time on the video. macOS
 asks once for the terminal to use them:
   ./ffmpeg -f avfoundation -framerate 30 -video_size 1280x720 -i "0:0" \\
-    -vf "drawtext=fontfile=/System/Library/Fonts/Helvetica.ttc:${clock}" \\
+    -vf "drawtext=${clock}" \\
     ${video} \\
     ${rate} -c:a aac -b:a 128k \\
     -f moq -moq_namespace demo-camera ${relay}
@@ -93,6 +93,23 @@ EOF
     esac
     printf '\nWithout -vf the video goes out as it is. The catalog needs a bitrate\n'
     printf 'for every track, so keep -maxrate (or -b) on the encoder.\n\n'
+    printf 'drawtext picks a font by name with font= (Sans by default) or takes\n'
+    printf 'one by path with fontfile=. '
+    case ${platform} in
+    windows)
+        printf 'It finds the Windows fonts through\n'
+        printf 'fonts\\fonts.conf, so keep the fonts folder next to ffmpeg.exe.\n\n'
+        ;;
+    macos)
+        printf 'It finds the macOS fonts on its own;\n'
+        printf 'Sans is Helvetica.\n\n'
+        ;;
+    *)
+        printf 'It uses the machine'"'"'s fonts and its\n'
+        printf 'Fontconfig settings in /etc/fonts. A server without them needs a font\n'
+        printf 'package, on Debian or Ubuntu: apt install fontconfig-config fonts-dejavu-core\n\n'
+        ;;
+    esac
 }
 
 ffmpeg_revision=$(git -C "${project_root}" rev-parse --short=10 HEAD)
@@ -104,6 +121,7 @@ log "Packaging ${name}..."
 rm -rf "${out_dir}"
 mkdir -p "${stage}" "${out_dir}/debug"
 cp "ffmpeg${exe}" "ffprobe${exe}" "${project_root}/COPYING.GPLv2" "${stage}/"
+[ "${platform}" != windows ] || cp -R fonts "${stage}/"
 {
     printf 'ffmpeg with the MoQ muxer (libmoq), %s %s.\n\n' "${platform}" "${arch}"
     printf '  ffmpeg    %s\n' "${ffmpeg_revision}"

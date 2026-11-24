@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # check-ffmpeg-moq - checks the ffmpeg that build-ffmpeg-moq built: the moq
-# muxer is there, x264 encodes, drawtext draws, and the binaries need
+# muxer is there, x264 encodes, drawtext finds its font, and the binaries need
 # nothing beyond what every machine has. On Windows it also publishes to a
 # closed port.
 #
@@ -24,19 +24,37 @@ log 'Checking the moq muxer and x264...'
     || die 'libx264 encode failed'
 
 log 'Checking drawtext...'
-# Linux finds a font through Fontconfig; macOS and Windows need fontfile=.
-case ${platform} in
-macos) font="fontfile=/System/Library/Fonts/Helvetica.ttc:" ;;
-windows) font="fontfile='C\\:/Windows/Fonts/arial.ttf':" ;;
-*) font='' ;;
-esac
-# The local time with milliseconds, as in the BUILDINFO.txt example. MSYS2
-# would rewrite the C: path.
-MSYS2_ARG_CONV_EXCL='*' ./ffmpeg -hide_banner -loglevel error \
+# The local time with milliseconds, as in the BUILDINFO.txt example, in the
+# default font Fontconfig finds without fontfile=. Fontconfig complains on
+# stderr even when a font is found, so anything printed fails too.
+output=$(./ffmpeg -hide_banner -loglevel error \
     -f lavfi -i testsrc2=duration=1:size=320x240:rate=30 \
-    -vf "drawtext=${font}text='%{localtime\:%X.%3N}':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black" \
-    -c:v libx264 -f null - \
-    || die 'drawtext failed'
+    -vf "drawtext=text='%{localtime\:%X.%3N}':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black" \
+    -c:v libx264 -f null - 2>&1) \
+    || die "drawtext failed: ${output}"
+[ -z "${output}" ] || die "drawtext printed: ${output}"
+
+# Without a fonts.conf of the machine's, the default font has to be the one
+# the build sets: the same frame as with that font's file. MSYS2 would
+# rewrite the C: path.
+case ${platform} in
+macos) default_font=Helvetica font="fontfile=/System/Library/Fonts/Helvetica.ttc:" ;;
+windows) default_font=Arial font="fontfile='C\\:/Windows/Fonts/arial.ttf':" ;;
+*) default_font='' ;;
+esac
+frame() {
+    MSYS2_ARG_CONV_EXCL='*' ./ffmpeg -hide_banner -loglevel error \
+        -f lavfi -i color=black:size=320x80:duration=1 \
+        -vf "drawtext=${1}text=Hg:fontsize=48:fontcolor=white" \
+        -frames:v 1 -f framemd5 - | grep -v '^#'
+}
+if [ -n "${default_font}" ]; then
+    log "Checking drawtext's default font is ${default_font}..."
+    default_frame=$(frame '') || die 'drawtext failed with the default font'
+    file_frame=$(frame "${font}") || die "drawtext failed with ${font%:}"
+    [ -n "${default_frame}" ] && [ "${default_frame}" = "${file_frame}" ] \
+        || die "drawtext's default font is not ${default_font}"
+fi
 
 if [ "${platform}" = macos ]; then
     log 'Checking avfoundation and VideoToolbox...'
@@ -51,7 +69,7 @@ log 'Checking the runtime dependencies...'
 binaries=(./ffmpeg)
 case ${platform} in
 macos)
-    allowed='^(/usr/lib/lib(System\.B|z\.1|c\+\+\.1|objc\.A)\.dylib|/System/Library/Frameworks/)'
+    allowed='^(/usr/lib/lib(System\.B|z\.1|c\+\+\.1|objc\.A|expat\.1)\.dylib|/System/Library/Frameworks/)'
     ;;
 windows)
     allowed='^(kernel32|advapi32|user32|gdi32|ole32|oleaut32|shell32|shlwapi|ws2_32|bcrypt|crypt32|iphlpapi|psapi|avicap32|msvfw32)\.dll$'

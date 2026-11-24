@@ -2,7 +2,7 @@
 #
 # The steps, each its own script, in order:
 #   build-openssl  build-libmoq  build-x264  build-zlib (Windows)
-#   build-freetype  build-harfbuzz  build-fontconfig (Linux)
+#   build-freetype  build-harfbuzz  build-fontconfig
 #   build-ffmpeg-moq  check-ffmpeg-moq  package-ffmpeg-moq
 #
 # MOQ_WORK_DIR (default: <repo>/.moq-build) holds deps/ (one cacheable
@@ -70,6 +70,7 @@ if [ "${platform}" = windows ]; then
     openssl_prefix="${deps_dir}/openssl/${vcpkg_triplet}"
     freetype_prefix="${deps_dir}/freetype/${vcpkg_triplet}"
     harfbuzz_prefix="${deps_dir}/harfbuzz/${vcpkg_triplet}"
+    fontconfig_prefix="${deps_dir}/fontconfig/${vcpkg_triplet}"
 fi
 
 jobs="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
