@@ -13,6 +13,8 @@ source "$(dirname "$0")/common.sh"
 
 OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.7}"
 OPENSSL_SHA256="${OPENSSL_SHA256:-a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8}"
+# The system root certificates on macOS and Linux.
+openssl_dir=/etc/ssl
 
 case ${1:-} in
 '') ;;
@@ -20,7 +22,7 @@ case ${1:-} in
     if [ "${platform}" = windows ]; then
         printf '%s-openssl-vcpkg\n' "${platform_id}"
     else
-        printf '%s-openssl%s\n' "${platform_id}" "${OPENSSL_VERSION}"
+        printf '%s-openssl%s%s\n' "${platform_id}" "${OPENSSL_VERSION}" "${openssl_dir//\//-}"
     fi
     exit 0
     ;;
@@ -44,7 +46,7 @@ build_openssl() {
     local src_dir="${deps_dir}/openssl-${OPENSSL_VERSION}"
     local tarball="${deps_dir}/openssl-${OPENSSL_VERSION}.tar.gz"
 
-    if up_to_date "${stamp}" "${OPENSSL_VERSION}"; then
+    if up_to_date "${stamp}" "${OPENSSL_VERSION} ${openssl_dir}"; then
         log "OpenSSL ${OPENSSL_VERSION} already installed, skipping build"
         return 0
     fi
@@ -62,13 +64,13 @@ build_openssl() {
         # --libdir=lib, not x86_64's default lib64.
         quiet openssl ./Configure no-shared no-tests no-apps no-docs \
             --prefix="${openssl_prefix}" --libdir=lib \
-            --openssldir="${openssl_prefix}/ssl"
+            --openssldir="${openssl_dir}"
         quiet openssl make -j"${jobs}" build_libs
         quiet openssl make install_dev
     )
     rm -rf "${src_dir}" "${tarball}"
     printf '  OpenSSL   %s (static)\n' "${OPENSSL_VERSION}" >"${openssl_prefix}/buildinfo"
-    printf '%s\n' "${OPENSSL_VERSION}" >"${stamp}"
+    printf '%s %s\n' "${OPENSSL_VERSION}" "${openssl_dir}" >"${stamp}"
 }
 
 install_openssl_windows() {
